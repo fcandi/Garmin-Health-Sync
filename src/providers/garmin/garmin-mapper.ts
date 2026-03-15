@@ -33,7 +33,7 @@ export function mapDailySummary(data: Record<string, unknown>, enabled: Set<stri
 		["calories_total", "totalKilocalories"],
 		["calories_active", "activeKilocalories"],
 		["distance_km", "totalDistanceMeters", (v) => v != null ? round1(Number(v) / 1000) : null],
-		["floors", "floorsAscended"],
+		["floors", "floorsAscended", (v) => Math.round(Number(v))],
 		["intensity_min", "moderateIntensityMinutes", (v) => {
 			const moderate = Number(v) || 0;
 			const vigorous = Number(data["vigorousIntensityMinutes"]) || 0;
@@ -103,17 +103,17 @@ export function mapHrvData(data: Record<string, unknown>, enabled: Set<string>):
 	return result;
 }
 
-/** Mappt Body Battery Daten */
-export function mapBodyBattery(data: Record<string, unknown>[], enabled: Set<string>): Record<string, number | string> {
+/** Mappt Body Battery Daten (Garmin gibt ein Objekt zurueck, kein Array) */
+export function mapBodyBattery(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
-	if (!enabled.has("body_battery") || data.length === 0) return result;
+	if (!enabled.has("body_battery") || Object.keys(data).length === 0) return result;
 
-	// Letzten Body-Battery-Wert des Tages nehmen
-	const entry = data[0];
-	if (entry) {
-		const charged = entry["charged"];
-		if (charged != null) result["body_battery"] = Number(charged);
-	}
+	// Body Battery kann in verschiedenen Feldern stecken
+	const charged = data["charged"]
+		?? get(data, "bodyBatteryStatList.0.charged")
+		?? data["bodyBatteryMostRecentValue"]
+		?? data["chargedValue"];
+	if (charged != null) result["body_battery"] = Number(charged);
 
 	return result;
 }
@@ -196,32 +196,13 @@ export function mapTrainingStatus(data: Record<string, unknown>, enabled: Set<st
 	return result;
 }
 
-/** Garmin Activity Type IDs zu normalisierten Sportart-Namen */
-const ACTIVITY_TYPE_MAP: Record<number, string> = {
-	1: "running",
-	2: "cycling",
-	3: "swimming",
-	4: "fitness",
-	5: "recreation",
-	6: "walking",
-	9: "hiking",
-	10: "strength_training",
-	11: "yoga",
-	13: "indoor_cycling",
-	15: "elliptical",
-	24: "multi_sport",
-	26: "treadmill",
-	29: "indoor_rowing",
-};
-
 /** Mappt Garmin Activities auf normalisierte Trainings-Strings */
 export function mapActivities(activities: Record<string, unknown>[]): Record<string, string> {
 	const grouped: Record<string, { count: number; distanceKm: number; durationMin: number; avgHr: number; hrCount: number; calories: number }> = {};
 
 	for (const act of activities) {
-		const typeId = Number(get(act, "activityType.typeId") ?? 0);
-		const typeName = ACTIVITY_TYPE_MAP[typeId]
-			?? String(get(act, "activityType.typeKey") ?? "workout").toLowerCase().replace(/\s+/g, "_");
+		// typeKey von der API ist autoritativ — Garmin aendert typeIds gelegentlich
+		const typeName = String(get(act, "activityType.typeKey") ?? "workout").toLowerCase().replace(/\s+/g, "_");
 
 		if (!grouped[typeName]) {
 			grouped[typeName] = { count: 0, distanceKm: 0, durationMin: 0, avgHr: 0, hrCount: 0, calories: 0 };

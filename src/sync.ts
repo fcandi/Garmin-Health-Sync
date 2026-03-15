@@ -103,6 +103,10 @@ export class SyncManager {
 			const dates = this.dateRange(fromDate, toDate);
 			let count = 0;
 
+			// Delay basierend auf Anzahl Endpoints berechnen (50 Req/Min Budget)
+			const batchDelay = this.provider.getRecommendedBatchDelay?.(enabledMetrics) ?? 2000;
+			console.log(`Health Sync: Backfill ${dates.length} dates, delay ${batchDelay}ms`);
+
 			for (const date of dates) {
 				try {
 					const data = await this.provider.fetchData(date, enabledMetrics);
@@ -118,8 +122,8 @@ export class SyncManager {
 						count++;
 					}
 
-					// Rate Limiting: 1 Sekunde zwischen Requests
-					await this.sleep(1000);
+					// Rate Limiting: dynamisch basierend auf Endpoint-Anzahl
+					await this.sleep(batchDelay);
 				} catch (error) {
 					console.warn(`Health Sync: Backfill failed for ${date}`, error);
 				}

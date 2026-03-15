@@ -1,5 +1,5 @@
 import type { HealthData, HealthProvider } from "../provider";
-import { GarminApi, GarminSession } from "./garmin-api";
+import { GarminApi, GarminSession, getRequiredEndpoints, calculateBatchDelay } from "./garmin-api";
 import {
 	mapDailySummary,
 	mapSleepData,
@@ -45,14 +45,18 @@ export class GarminProvider implements HealthProvider {
 		this.api.closeBrowser();
 	}
 
-	/** BrowserWindow im Hintergrund oeffnen (fuer schnellere Syncs) */
-	warmupBrowser(): void {
-		this.api.ensureBrowser().catch(() => {});
+	/** Empfohlene Pause zwischen Daten bei Batch-Operationen (ms) */
+	getRecommendedBatchDelay(enabledMetrics: string[]): number {
+		const endpoints = getRequiredEndpoints(enabledMetrics);
+		return calculateBatchDelay(endpoints.length);
 	}
 
 	async fetchData(date: string, enabledMetrics: string[]): Promise<HealthData> {
 		const enabled = new Set(enabledMetrics);
-		console.log("Health Sync: Enabled metrics:", enabledMetrics.join(", "));
+		// Nur benoetigte Endpoints aufrufen
+		const requiredEndpoints = getRequiredEndpoints(enabledMetrics);
+		this.api.setRequiredEndpoints(requiredEndpoints);
+		console.log("Health Sync: Endpoints:", requiredEndpoints.join(", "), `(${requiredEndpoints.length}/${Object.keys(enabledMetrics).length} metrics)`);
 		const metrics: Record<string, number | string> = {};
 
 		const requests: Promise<void>[] = [];

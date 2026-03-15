@@ -24,4 +24,7 @@ export interface HealthProvider {
 
 	/** Gesundheitsdaten fuer ein bestimmtes Datum abrufen */
 	fetchData(date: string, enabledMetrics: string[]): Promise<HealthData>;
+
+	/** Empfohlene Pause zwischen Daten bei Batch-Operationen (ms) — optional */
+	getRecommendedBatchDelay?(enabledMetrics: string[]): number;
 }

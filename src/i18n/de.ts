@@ -3,7 +3,7 @@ import type { TranslationKeys } from "./en";
 export const de: Record<TranslationKeys, string> = {
 	// Commands
 	commandSync: "Gesundheitsdaten abrufen",
-	commandBackfill: "Gesundheitsdaten nachtraeglich auffuellen",
+	commandBackfill: "Gesundheitsdaten nachträglich auffüllen",
 
 	// Settings
 	settingsTitle: "Health Sync",
@@ -16,24 +16,24 @@ export const de: Record<TranslationKeys, string> = {
 	settingsAutoSync: "Heutige Daily Note automatisch synchronisieren",
 	settingsAutoSyncDesc: "Gesundheitsdaten einmal beim Obsidian-Start synchronisieren",
 	settingsAutoSyncPaused: "Pausiert wegen Auth-Fehler — nach erneutem Login wieder aktivieren",
-	settingsPrefix: "Property-Prefix",
-	settingsPrefixDesc: "'ohs_' Prefix vor alle Properties setzen",
+	settingsPrefix: "Property-Präfix",
+	settingsPrefixDesc: "'ohs_' Präfix vor alle Properties setzen",
 	settingsDailyNotePath: "Daily Notes Pfad",
 	settingsDailyNotePathDesc: "Pfad zum Daily Notes Ordner",
 	settingsDailyNoteFormat: "Daily Note Format",
-	settingsDailyNoteFormatDesc: "Datumsformat fuer Daily Notes Dateinamen",
+	settingsDailyNoteFormatDesc: "Datumsformat für Daily Notes Dateinamen",
 	settingsMetricsStandard: "Standard-Metriken",
 	settingsMetricsExtended: "Erweiterte Metriken",
-	settingsMetricsExtendedDesc: "Zusaetzliche Metriken (klicken zum aufklappen)",
+	settingsMetricsExtendedDesc: "Zusätzliche Metriken (klicken zum Aufklappen)",
 	settingsLanguage: "Sprache",
-	settingsLanguageDesc: "Sprache der Plugin-Oberflaeche",
+	settingsLanguageDesc: "Sprache der Plugin-Oberfläche",
 
 	// Metric Labels
 	metric_steps: "Schritte",
 	metric_sleep_duration: "Schlafdauer",
-	metric_sleep_score: "Schlafqualitaet",
+	metric_sleep_score: "Schlafqualität",
 	metric_resting_hr: "Ruhe-Herzfrequenz",
-	metric_hrv: "Herzratenvariabilitaet",
+	metric_hrv: "Herzratenvariabilität",
 	metric_stress: "Stresslevel",
 	metric_body_battery: "Body Battery",
 	metric_spo2: "Blutsauerstoff",
@@ -42,7 +42,7 @@ export const de: Record<TranslationKeys, string> = {
 	metric_calories_active: "Aktive Kalorien",
 	metric_distance_km: "Distanz (km)",
 	metric_floors: "Stockwerke",
-	metric_intensity_min: "Intensitaetsminuten",
+	metric_intensity_min: "Intensitätsminuten",
 	metric_sleep_deep: "Tiefschlaf",
 	metric_sleep_light: "Leichtschlaf",
 	metric_sleep_rem: "REM-Schlaf",
@@ -50,13 +50,13 @@ export const de: Record<TranslationKeys, string> = {
 	metric_training_readiness: "Trainingsbereitschaft",
 	metric_training_status: "Trainingsstatus",
 	metric_weight_kg: "Gewicht (kg)",
-	metric_body_fat_pct: "Koerperfettanteil",
-	metric_hydration_ml: "Fluessigkeitszufuhr (ml)",
+	metric_body_fat_pct: "Körperfettanteil",
+	metric_hydration_ml: "Flüssigkeitszufuhr (ml)",
 
 	// Notices
 	noticeSyncing: "Synchronisiere Gesundheitsdaten...",
 	noticeSyncSuccess: "Gesundheitsdaten erfolgreich synchronisiert",
-	noticeSyncNoData: "Keine Gesundheitsdaten fuer dieses Datum verfuegbar",
+	noticeSyncNoData: "Keine Gesundheitsdaten für dieses Datum verfügbar",
 	noticeSyncError: "Fehler beim Synchronisieren der Gesundheitsdaten",
 	noticeLoginRequired: "Bitte zuerst bei Garmin Connect anmelden (Einstellungen → Health Sync)",
 	noticeLoginSuccess: "Garmin Connect Anmeldung erfolgreich!",
@@ -67,7 +67,7 @@ export const de: Record<TranslationKeys, string> = {
 	noticeBackfillDone: "Nachsynchronisierung abgeschlossen: {count} Tage aktualisiert",
 
 	// Backfill Modal
-	modalBackfillTitle: "Gesundheitsdaten nachtraeglich auffuellen",
+	modalBackfillTitle: "Gesundheitsdaten nachträglich auffüllen",
 	modalBackfillFrom: "Von",
 	modalBackfillTo: "Bis",
 	modalBackfillStart: "Starten",

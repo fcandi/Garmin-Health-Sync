@@ -4,6 +4,7 @@ import { SyncManager } from "./sync";
 import { GarminProvider } from "./providers/garmin/garmin-provider";
 import type { GarminSession } from "./providers/garmin/garmin-api";
 import { t } from "./i18n/t";
+import { hasHealthData } from "./daily-note";
 
 export default class HealthSyncPlugin extends Plugin {
 	settings: HealthSyncSettings;
@@ -54,11 +55,8 @@ export default class HealthSyncPlugin extends Plugin {
 		// Settings Tab
 		this.addSettingTab(new HealthSyncSettingTab(this.app, this));
 
-		// Beim Start: BrowserWindow proaktiv oeffnen (versteckt) + Auto-Sync
+		// Beim Start: nur Auto-Sync — BrowserWindow oeffnet sich erst bei Bedarf
 		this.app.workspace.onLayoutReady(() => {
-			if (this.garminProvider.isSessionValid()) {
-				this.garminProvider.warmupBrowser();
-			}
 			this.tryAutoSync();
 		});
 
@@ -76,24 +74,70 @@ export default class HealthSyncPlugin extends Plugin {
 		try { this.garminProvider.closeBrowser(); } catch { /* ignore */ }
 	}
 
-	/** Auto-Sync — holt Daten von gestern, einmal pro Tag */
+	/** Auto-Sync — prueft die letzten 7 Tage, synct fehlende */
 	private async tryAutoSync(): Promise<void> {
 		if (!this.settings.autoSync) return;
 		if (this.settings.autoSyncPaused) return;
-		const yesterday = this.yesterdayString();
-		if (this.settings.lastSyncDate === yesterday) return;
+		const today = this.todayString();
+		if (this.settings.lastSyncDate === today) return; // Heute schon gelaufen
 		if (!this.garminProvider.isSessionValid()) return;
 
+		const enabledMetrics = Object.entries(this.settings.enabledMetrics)
+			.filter(([, enabled]) => enabled)
+			.map(([key]) => key);
+
+		const checkOptions = {
+			dailyNotePath: this.settings.dailyNotePath,
+			dailyNoteFormat: this.settings.dailyNoteFormat,
+			prefix: this.settings.usePrefix ? "ohs_" : "",
+			enabledMetrics,
+		};
+
+		// Letzte 7 Tage pruefen — welche haben noch keine Health-Daten?
+		const datesToSync: string[] = [];
+		for (let i = 1; i <= 7; i++) {
+			const d = new Date();
+			d.setDate(d.getDate() - i);
+			const dateStr = this.dateString(d);
+
+			if (!hasHealthData(this.app, dateStr, checkOptions)) {
+				datesToSync.push(dateStr);
+			}
+		}
+
+		if (datesToSync.length === 0) {
+			console.log("Health Sync: Auto-sync — all 7 days already have data");
+			this.settings.lastSyncDate = today;
+			await this.saveSettings();
+			return;
+		}
+
+		console.log("Health Sync: Auto-sync — missing data for:", datesToSync.join(", "));
+
 		try {
-			const success = await this.syncManager.syncDate(yesterday, this.settings);
-			if (success) {
-				this.settings.lastSyncDate = yesterday;
-				await this.saveSession();
-				await this.saveSettings();
+			const batchDelay = this.garminProvider.getRecommendedBatchDelay(enabledMetrics);
+			let synced = 0;
+
+			for (let i = 0; i < datesToSync.length; i++) {
+				const date = datesToSync[i]!;
+				const success = await this.syncManager.syncDate(date, this.settings);
+				if (success) synced++;
+
+				// Rate-Limit-Delay zwischen Daten (nicht nach dem letzten)
+				if (i < datesToSync.length - 1) {
+					await new Promise(r => setTimeout(r, batchDelay));
+				}
+			}
+
+			this.settings.lastSyncDate = today;
+			await this.saveSession();
+			await this.saveSettings();
+
+			if (synced > 0) {
+				console.log(`Health Sync: Auto-sync done — ${synced}/${datesToSync.length} days synced`);
 			}
 		} catch (error) {
 			console.error("Health Sync: Auto-sync failed", error);
-			// Bei Auth-Fehler Auto-Sync pausieren
 			this.settings.autoSyncPaused = true;
 			await this.saveSettings();
 			new Notice(t("noticeAutoSyncPaused", this.settings.language));

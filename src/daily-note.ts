@@ -3,6 +3,35 @@ import type { HealthData } from "./providers/provider";
 import { applyPrefix } from "./metrics";
 
 /**
+ * Prueft ob eine Daily Note bereits Health-Daten im Frontmatter hat.
+ * Gibt true zurueck wenn mindestens eine aktivierte Metrik vorhanden ist.
+ */
+export function hasHealthData(
+	app: App,
+	date: string,
+	options: {
+		dailyNotePath: string;
+		dailyNoteFormat: string;
+		prefix: string;
+		enabledMetrics: string[];
+	}
+): boolean {
+	const fileName = formatDate(date, options.dailyNoteFormat);
+	const filePath = normalizePath(`${options.dailyNotePath}/${fileName}.md`);
+	const file = app.vault.getAbstractFileByPath(filePath);
+	if (!(file instanceof TFile)) return false;
+
+	const cache = app.metadataCache.getFileCache(file);
+	if (!cache?.frontmatter) return false;
+
+	for (const metric of options.enabledMetrics) {
+		const key = applyPrefix(metric, options.prefix);
+		if (cache.frontmatter[key] !== undefined) return true;
+	}
+	return false;
+}
+
+/**
  * Schreibt Gesundheitsdaten als Frontmatter-Properties in eine Daily Note.
  * Erstellt die Daily Note falls sie nicht existiert.
  */

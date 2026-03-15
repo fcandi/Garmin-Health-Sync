@@ -8,6 +8,61 @@ const SIGNIN_PARAMS: Record<string, string> = {
 	service: APP_BASE,
 };
 
+const API_BASE = `${CONNECT_BASE}/gc-api`;
+
+/** Direct API endpoint URLs — aufgerufen via electron.net statt BrowserWindow-Interceptor */
+const ENDPOINTS: Record<string, (displayName: string, date: string) => string> = {
+	dailySummary: (dn, date) => `${API_BASE}/usersummary-service/usersummary/daily/${dn}?calendarDate=${date}`,
+	sleep: (dn, date) => `${API_BASE}/wellness-service/wellness/dailySleepData/${dn}?date=${date}&nonSleepBufferMinutes=60`,
+	hrv: (_, date) => `${API_BASE}/hrv-service/hrv/${date}`,
+	bodyBattery: (_, date) => `${API_BASE}/wellness-service/wellness/bodyBattery/reports/daily?startDate=${date}&endDate=${date}`,
+	activities: (_, date) => `${API_BASE}/activitylist-service/activities/search/activities?startDate=${date}&endDate=${date}&limit=20`,
+	weight: (_, date) => `${API_BASE}/weight-service/weight/dateRange?startDate=${date}&endDate=${date}`,
+	spo2: (_, date) => `${API_BASE}/wellness-service/wellness/daily/spo2/${date}`,
+	respiration: (_, date) => `${API_BASE}/wellness-service/wellness/daily/respiration/${date}`,
+	trainingStatus: (_, date) => `${API_BASE}/metrics-service/metrics/maxmet/daily/${date}/${date}`,
+	trainingReadiness: (_, date) => `${API_BASE}/metrics-service/metrics/trainingreadiness/${date}`,
+	hydration: (_, date) => `${API_BASE}/usersummary-service/usersummary/hydration/daily/${date}`,
+};
+
+/** Welche Metriken brauchen welchen Endpoint */
+const ENDPOINT_METRIC_MAP: Record<string, string[]> = {
+	dailySummary: ["steps", "resting_hr", "stress", "calories_total", "calories_active", "distance_km", "floors", "intensity_min"],
+	sleep: ["sleep_duration", "sleep_score", "sleep_deep", "sleep_light", "sleep_rem", "sleep_awake"],
+	hrv: ["hrv"],
+	bodyBattery: ["body_battery"],
+	activities: [], // Immer laden — dynamische Frontmatter-Keys
+	weight: ["weight_kg", "body_fat_pct"],
+	spo2: ["spo2"],
+	respiration: ["respiration_rate"],
+	trainingStatus: ["training_status"],
+	trainingReadiness: ["training_readiness"],
+	hydration: ["hydration_ml"],
+};
+
+/** Bestimmt welche Endpoints fuer die aktivierten Metriken noetig sind */
+export function getRequiredEndpoints(enabledMetrics: string[]): string[] {
+	const enabled = new Set(enabledMetrics);
+	const endpoints: string[] = ["activities"]; // Immer laden
+
+	for (const [endpoint, metrics] of Object.entries(ENDPOINT_METRIC_MAP)) {
+		if (endpoint === "activities") continue;
+		if (metrics.some(m => enabled.has(m))) {
+			endpoints.push(endpoint);
+		}
+	}
+
+	return endpoints;
+}
+
+/** Berechnet empfohlene Pause zwischen Daten bei Batch-Operationen (ms) */
+export function calculateBatchDelay(endpointCount: number): number {
+	const maxDatesPerMinute = Math.floor(50 / Math.max(endpointCount, 1));
+	const cycleTimeMs = Math.ceil(60000 / maxDatesPerMinute);
+	// Minus ~2s geschaetzte Fetch-Dauer, mindestens 1s
+	return Math.max(cycleTimeMs - 2000, 1000);
+}
+
 export interface GarminSession {
 	displayName: string;
 	timestamp: number;
@@ -32,6 +87,7 @@ type BrowserWindowType = {
 export class GarminApi {
 	private session: GarminSession | null = null;
 	private browserWindow: BrowserWindowType | null = null;
+	private requiredEndpoints: string[] | null = null;
 
 	setSession(session: GarminSession | null): void {
 		this.session = session;
@@ -39,6 +95,11 @@ export class GarminApi {
 
 	getSession(): GarminSession | null {
 		return this.session;
+	}
+
+	/** Setzt die Endpoints die beim naechsten Fetch aufgerufen werden */
+	setRequiredEndpoints(endpoints: string[]): void {
+		this.requiredEndpoints = endpoints;
 	}
 
 	isSessionValid(): boolean {
@@ -155,11 +216,32 @@ export class GarminApi {
 				window.__hs_injected = true;
 				window.__hs_displayName = "";
 				window.__hs_responses = {};
+				window.__hs_apiHeaders = null;
 
 				// Fetch abfangen
 				const origFetch = window.fetch;
 				window.fetch = function(input, init) {
 					const url = typeof input === "string" ? input : (input?.url || "");
+
+					// API-Headers abfangen (v.a. connect-csrf-token fuer Direct Fetch)
+					if (url.includes("/gc-api/") || url.includes("/proxy/")) {
+						try {
+							var h = {};
+							if (init && init.headers) {
+								if (init.headers instanceof Headers) {
+									init.headers.forEach(function(v, k) { h[k] = v; });
+								} else if (typeof init.headers === "object") {
+									Object.keys(init.headers).forEach(function(k) { h[k] = init.headers[k]; });
+								}
+							}
+							if (typeof input === "object" && input instanceof Request && input.headers) {
+								input.headers.forEach(function(v, k) { h[k] = v; });
+							}
+							if (Object.keys(h).length > 0) {
+								window.__hs_apiHeaders = h;
+							}
+						} catch(e) {}
+					}
 					const result = origFetch.apply(this, arguments);
 
 					// displayName aus URLs extrahieren
@@ -236,30 +318,106 @@ export class GarminApi {
 		return this.loginViaBrowser();
 	}
 
-	// --- Daten abrufen via BrowserWindow Navigation ---
+	// --- Daten abrufen ---
 
-	/** Daten fuer ein Datum abrufen: Browser zur Daily-Summary-Seite navigieren und Responses abfangen */
+	/** Daten fuer ein Datum abrufen: zuerst Direct Fetch im BrowserWindow-Context, Fallback auf Navigation */
 	async fetchDataForDate(date: string): Promise<Record<string, unknown>> {
+		if (!this.session?.displayName) {
+			throw new Error("Not logged in");
+		}
+
+		// BrowserWindow sicherstellen (Login falls noetig)
 		if (!this.isBrowserReady()) {
 			console.log("Health Sync: Browser not ready, opening...");
 			const ok = await this.loginViaBrowser();
 			if (!ok) throw new Error("Could not open browser session");
 		}
-		if (!this.session?.displayName) {
-			throw new Error("Not logged in");
-		}
 
-		// TEST: electron.net mit persistiertem Cookie-Jar
-		console.log("Health Sync: Testing electron.net...");
+		// Fast Path: Parallel fetch() im BrowserWindow-Context (~1-2s)
 		try {
-			const testUrl = `${CONNECT_BASE}/gc-api/usersummary-service/usersummary/daily/${this.session.displayName}?calendarDate=${date}`;
-			const timeout = new Promise<unknown>((_, reject) => setTimeout(() => reject(new Error("Timeout 5s")), 5000));
-			const testResult = await Promise.race([this.electronNetGet(testUrl), timeout]);
-			console.log("Health Sync: electron.net TEST:", JSON.stringify(testResult).substring(0, 200));
+			const data = await this.fetchDirectInBrowser(date);
+			if (Object.keys(data).length > 0) {
+				console.log("Health Sync: Direct fetch OK ✓ keys:", Object.keys(data).join(", "));
+				return data;
+			}
+			console.log("Health Sync: Direct fetch returned no data, falling back to navigation");
 		} catch (e) {
-			console.log("Health Sync: electron.net TEST failed:", e);
+			console.log("Health Sync: Direct fetch failed, falling back to navigation:", e);
 		}
 
+		// Slow Path: Seiten-Navigation + Interceptor (~10-15s)
+		return this.fetchViaNavigation(date);
+	}
+
+	/** Alle benoetigten Endpoints parallel via fetch() im BrowserWindow-Context aufrufen */
+	private async fetchDirectInBrowser(date: string): Promise<Record<string, unknown>> {
+		const dn = this.session!.displayName;
+		const endpointKeys = this.requiredEndpoints ?? Object.keys(ENDPOINTS);
+		if (endpointKeys.length === 0) return {};
+
+		// Pruefen ob wir API-Headers (v.a. CSRF-Token) von der App abgefangen haben
+		const headersJson = await this.browserWindow!.webContents.executeJavaScript(
+			`JSON.stringify(window.__hs_apiHeaders || null)`
+		);
+		if (!headersJson || headersJson === "null") {
+			console.log("Health Sync: No CSRF token captured yet — skipping direct fetch");
+			return {};
+		}
+
+		// Alle fetch-Calls mit den abgefangenen Headers ausfuehren
+		const fetchCalls = endpointKeys.map(key => {
+			const buildUrl = ENDPOINTS[key];
+			if (!buildUrl) return `Promise.resolve({ key: ${JSON.stringify(key)}, status: 0, data: null })`;
+			const url = buildUrl(dn, date);
+			return `fetch(${JSON.stringify(url)}, { headers: Object.assign({}, window.__hs_apiHeaders, { "NK": "NT", "Accept": "application/json" }) })
+				.then(r => r.ok ? r.json().then(d => ({ key: ${JSON.stringify(key)}, status: r.status, data: d }))
+					: ({ key: ${JSON.stringify(key)}, status: r.status, data: null }))
+				.catch(e => ({ key: ${JSON.stringify(key)}, status: -1, data: null, error: String(e) }))`;
+		});
+
+		const code = `Promise.all([${fetchCalls.join(",")}]).then(r => JSON.stringify(r))`;
+
+		// Timeout: falls BrowserWindow haengt
+		const timeout = new Promise<never>((_, reject) =>
+			setTimeout(() => reject(new Error("BrowserWindow fetch timeout 15s")), 15000));
+
+		const rawJson = await Promise.race([
+			this.browserWindow!.webContents.executeJavaScript(code),
+			timeout
+		]);
+
+		const entries = JSON.parse(rawJson as string) as Array<{ key: string; status: number; data: unknown; error?: string }>;
+		const results: Record<string, unknown> = {};
+		const failed: string[] = [];
+
+		for (const entry of entries) {
+			if (entry.data != null && typeof entry.data === "object" && Object.keys(entry.data as object).length > 0) {
+				results[entry.key] = this.transformResponse(entry.key, entry.data);
+			} else if (entry.status !== 200) {
+				failed.push(`${entry.key}:${entry.status}`);
+			}
+		}
+
+		if (failed.length > 0) {
+			console.log("Health Sync: Direct fetch — failed endpoints:", failed.join(", "));
+		}
+
+		return results;
+	}
+
+	/** Gleiche Response-Transformationen wie der BrowserWindow-Interceptor */
+	private transformResponse(key: string, data: unknown): unknown {
+		if (key === "sleep") {
+			return (data as Record<string, unknown>)?.dailySleepDTO || data;
+		}
+		if (key === "trainingReadiness") {
+			return Array.isArray(data) ? data[0] : data;
+		}
+		return data;
+	}
+
+	/** Fallback: BrowserWindow zur Daily-Summary-Seite navigieren + Interceptor */
+	private async fetchViaNavigation(date: string): Promise<Record<string, unknown>> {
 		// Gesammelte Responses zuruecksetzen
 		await this.browserWindow!.webContents.executeJavaScript(`window.__hs_responses = {};`);
 
@@ -269,7 +427,6 @@ export class GarminApi {
 		// Zur Daily-Summary-Seite fuer das gewuenschte Datum navigieren
 		const url = `${APP_BASE}/daily-summary/${date}`;
 		console.log("Health Sync: Navigating to", url);
-		// loadURL kann ERR_ABORTED werfen weil die SPA den Router uebernimmt — ignorieren
 		await this.browserWindow!.loadURL(url).catch(() => {});
 
 		// Warten bis die App die API-Calls gemacht hat
@@ -286,7 +443,6 @@ export class GarminApi {
 					Object.keys(window.__hs_responses || {}).length
 				`);
 				if (Number(hasData) >= 3) {
-					// Etwas mehr warten damit alle Responses eintreffen
 					await new Promise(r => setTimeout(r, 3000));
 					break;
 				}
@@ -301,12 +457,10 @@ export class GarminApi {
 		`);
 
 		const responses = JSON.parse(rawJson as string) as Record<string, unknown>;
-		console.log("Health Sync: Collected responses keys:", Object.keys(responses).join(", "));
+		console.log("Health Sync: Navigation fetch keys:", Object.keys(responses).join(", "));
 
-		// Debug: Zeige Struktur jeder Response
 		for (const [key, value] of Object.entries(responses)) {
-			const json = JSON.stringify(value);
-			console.log(`Health Sync: [${key}]`, json.substring(0, 200));
+			console.log(`Health Sync: Navigation [${key}]`, JSON.stringify(value).substring(0, 150));
 		}
 
 		return responses;
@@ -329,10 +483,11 @@ export class GarminApi {
 		return (data.hrv || {}) as Record<string, unknown>;
 	}
 
-	async fetchBodyBattery(date: string): Promise<Record<string, unknown>[]> {
+	async fetchBodyBattery(date: string): Promise<Record<string, unknown>> {
 		const data = await this.getCachedOrFetch(date);
 		const bb = data.bodyBattery;
-		return Array.isArray(bb) ? bb as Record<string, unknown>[] : [];
+		if (!bb || typeof bb !== "object") return {};
+		return (Array.isArray(bb) ? bb[0] : bb) as Record<string, unknown> ?? {};
 	}
 
 	async fetchActivities(date: string): Promise<Record<string, unknown>[]> {
@@ -416,33 +571,6 @@ export class GarminApi {
 
 	async refreshDisplayName(): Promise<string> {
 		return this.session?.displayName || "";
-	}
-
-	/** HTTP GET via Electron net (nutzt persistierten Cookie-Jar der Session) */
-	private electronNetGet(url: string): Promise<unknown> {
-		const electron = require("electron");
-		const { net } = electron.remote || electron;
-
-		return new Promise((resolve, reject) => {
-			const request = net.request({ url, method: "GET" });
-			request.setHeader("NK", "NT");
-			request.setHeader("Accept", "application/json");
-
-			let body = "";
-			request.on("response", (response: { statusCode: number; on: (event: string, handler: (chunk?: Buffer) => void) => void }) => {
-				response.on("data", (chunk: Buffer) => { body += chunk.toString(); });
-				response.on("end", () => {
-					console.log("Health Sync: net.request", response.statusCode, body.substring(0, 100));
-					if (response.statusCode === 200 && body.length > 2) {
-						try { resolve(JSON.parse(body)); } catch { resolve({}); }
-					} else {
-						resolve({});
-					}
-				});
-			});
-			request.on("error", reject);
-			request.end();
-		});
 	}
 
 	private buildUrl(base: string, params: Record<string, string>): string {
