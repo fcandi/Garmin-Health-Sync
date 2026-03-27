@@ -1,6 +1,6 @@
 /**
  * Reverse Geocoding via Nominatim (OpenStreetMap).
- * Kostenfrei, kein API-Key noetig. Rate Limit: 1 req/s pro IP.
+ * Free to use, no API key required. Rate limit: 1 req/s per IP.
  */
 
 import { requestUrl } from "obsidian";
@@ -9,21 +9,21 @@ const NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse";
 const USER_AGENT = "ObsidianHealthSync/1.0";
 
 /**
- * Entfernt nicht-lateinische Schriftzeichen aus einem String.
- * Nominatim liefert bei manchen Laendern Multiscript-Antworten
- * (z.B. "Oualidia ⵍⵡⴰⵍⵉⴷⵢⵢⴰ الوليدية"), wir wollen nur den lateinischen Teil.
+ * Removes non-Latin characters from a string.
+ * Nominatim returns multi-script results for some countries
+ * (e.g. "Oualidia ⵍⵡⴰⵍⵉⴷⵢⵢⴰ الوليدية"), we only want the Latin part.
  */
 function cleanMultiscript(text: string): string {
-	// Worte behalten, die nur aus Latin-Zeichen + gaengigen Sonderzeichen bestehen
+	// Keep words that consist only of Latin characters + common special characters
 	const words = text.split(/\s+/);
 	const latin = words.filter(w => !/[\u0250-\uFFFF]/.test(w));
 	return latin.length > 0 ? latin.join(" ").trim() : text.trim();
 }
 
 /**
- * Wandelt Koordinaten in einen lesbaren Ortsnamen um.
- * Nutzt die Obsidian-Sprache fuer lokalisierte Ergebnisse.
- * Gibt z.B. "Bad Honnef, Deutschland" zurueck, oder null bei Fehler.
+ * Converts coordinates into a human-readable location name.
+ * Uses the Obsidian language for localized results.
+ * Returns e.g. "Bad Honnef, Germany" or null on error.
  */
 export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
 	try {

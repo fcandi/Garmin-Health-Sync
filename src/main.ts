@@ -15,16 +15,16 @@ export default class HealthSyncPlugin extends Plugin {
 		await this.loadSettings();
 		this.autoDetectDailyNotePath();
 
-		// Provider initialisieren
+		// Initialize provider
 		this.garminProvider = new GarminProvider();
 
-		// Session wiederherstellen
+		// Restore session
 		if (this.settings.garminSession) {
 			try {
 				const session = JSON.parse(this.settings.garminSession) as GarminSession;
 				this.garminProvider.setSession(session);
 			} catch {
-				// Ungueltige Session ignorieren
+				// Ignore invalid session
 			}
 		}
 
@@ -57,12 +57,12 @@ export default class HealthSyncPlugin extends Plugin {
 		// Settings Tab
 		this.addSettingTab(new HealthSyncSettingTab(this.app, this));
 
-		// Beim Start: nur Auto-Sync — BrowserWindow oeffnet sich erst bei Bedarf
+		// On startup: auto-sync only — BrowserWindow opens on demand
 		this.app.workspace.onLayoutReady(() => {
 			void this.tryAutoSync();
 		});
 
-		// Auto-Sync beim Oeffnen von heute/gestern Daily Note
+		// Auto-sync when opening today's/yesterday's daily note
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				if (file instanceof TFile && this.isDailyNote(file, [this.todayString(), this.yesterdayString()])) {
@@ -76,7 +76,7 @@ export default class HealthSyncPlugin extends Plugin {
 		try { this.garminProvider.closeBrowser(); } catch { /* ignore */ }
 	}
 
-	/** Auto-Sync — prueft die letzten 7 Tage, synct fehlende oder veraltete */
+	/** Auto-sync — checks the last 7 days, syncs missing or outdated data */
 	private async tryAutoSync(): Promise<void> {
 		if (!this.settings.autoSync) return;
 		if (this.settings.autoSyncPaused) return;
@@ -100,19 +100,19 @@ export default class HealthSyncPlugin extends Plugin {
 		if (!this.garminProvider.isSessionValid()) return;
 
 		const now = Date.now();
-		const RESYNC_WINDOW_MS = 72 * 60 * 60 * 1000; // 72h — jüngere Daten dürfen überschrieben werden
-		const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h Pause zwischen Re-Syncs pro Datum
-		const FIRST_COOLDOWN_MS = 30 * 60 * 1000; // 30min — erster Re-Sync schneller
+		const RESYNC_WINDOW_MS = 72 * 60 * 60 * 1000; // 72h — more recent data may be overwritten
+		const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
+		const FIRST_COOLDOWN_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
 		const syncTimes = this.settings.lastSyncTimes;
 
-		// Letzte 7 Tage pruefen — welche brauchen einen (Re-)Sync?
+		// Check last 7 days — which ones need a (re-)sync?
 		const datesToSync: string[] = [];
 		for (let i = 1; i <= 7; i++) {
 			const d = new Date();
 			d.setDate(d.getDate() - i);
 			const dateStr = this.dateString(d);
 
-			// Alter des Datums: Mitternacht Folgetag = "Daten komplett"
+			// Date age: midnight of next day = "data complete"
 			const dateEnd = new Date(dateStr + "T00:00:00");
 			dateEnd.setDate(dateEnd.getDate() + 1);
 			const ageMs = now - dateEnd.getTime();
@@ -120,10 +120,10 @@ export default class HealthSyncPlugin extends Plugin {
 			const lastSync = syncTimes[dateStr];
 
 			if (ageMs > RESYNC_WINDOW_MS) {
-				// Aelter als 72h: nur synchen wenn noch nie gesynct
+				// Older than 72h: only sync if never synced before
 				if (!lastSync) datesToSync.push(dateStr);
 			} else {
-				// Innerhalb 72h: Re-Sync erlaubt, aber mit 6h Cooldown
+				// Within 72h: re-sync allowed but with 6h cooldown
 				if (!lastSync || (now - lastSync) >= COOLDOWN_MS) {
 					datesToSync.push(dateStr);
 				}
@@ -152,21 +152,21 @@ export default class HealthSyncPlugin extends Plugin {
 					synced++;
 					const isFirstSync = !this.settings.lastSyncTimes[date];
 					if (isFirstSync) {
-						// Erster Sync: kurzem Cooldown (30min) simulieren
+						// First sync: simulate short cooldown (30min)
 						this.settings.lastSyncTimes[date] = Date.now() - (COOLDOWN_MS - FIRST_COOLDOWN_MS);
 					} else {
-						// Folgende Syncs: voller 6h Cooldown
+						// Subsequent syncs: full 6h cooldown
 						this.settings.lastSyncTimes[date] = Date.now();
 					}
 				}
 
-				// Rate-Limit-Delay zwischen Daten (nicht nach dem letzten)
+				// Rate-limit delay between dates (not after the last one)
 				if (i < datesToSync.length - 1) {
 					await new Promise(r => setTimeout(r, batchDelay));
 				}
 			}
 
-			// Alte Eintraege bereinigen (aelter als 8 Tage)
+			// Clean up old entries (older than 8 days)
 			const CLEANUP_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 			for (const [dateKey, timestamp] of Object.entries(this.settings.lastSyncTimes)) {
 				if (now - timestamp > CLEANUP_AGE_MS) {
@@ -181,14 +181,17 @@ export default class HealthSyncPlugin extends Plugin {
 				console.debug(`Health Sync: Auto-sync done — ${synced}/${datesToSync.length} days synced`);
 			}
 		} catch (error) {
-			console.error("Health Sync: Auto-sync failed", error);
+			// login_required: notice was already shown in syncDate
+			if (!(error instanceof Error && error.message === "login_required")) {
+				console.error("Health Sync: Auto-sync failed", error);
+				new Notice(t("noticeAutoSyncPaused", this.settings.language));
+			}
 			this.settings.autoSyncPaused = true;
 			await this.saveSettings();
-			new Notice(t("noticeAutoSyncPaused", this.settings.language));
 		}
 	}
 
-	/** Manueller Sync — kontextabhaengig je nach offener Daily Note */
+	/** Manual sync — context-dependent based on the open daily note */
 	private async manualSync(): Promise<void> {
 		if (!this.garminProvider.isSessionValid()) {
 			new Notice(t("noticeLoginRequired", this.settings.language));
@@ -196,15 +199,23 @@ export default class HealthSyncPlugin extends Plugin {
 		}
 
 		const syncDate = this.detectSyncDate();
-		const success = await this.syncManager.syncDate(syncDate, this.settings);
-		if (success) {
-			this.settings.lastSyncTimes[syncDate] = Date.now();
-			await this.saveSession();
-			await this.saveSettings();
+		try {
+			const success = await this.syncManager.syncDate(syncDate, this.settings);
+			if (success) {
+				this.settings.lastSyncTimes[syncDate] = Date.now();
+				await this.saveSession();
+				await this.saveSettings();
+			}
+		} catch (error) {
+			if (error instanceof Error && error.message === "login_required") {
+				// Notice was already shown in syncDate
+				this.settings.autoSyncPaused = true;
+				await this.saveSettings();
+			}
 		}
 	}
 
-	/** Bestimmt das Sync-Datum anhand der aktuell offenen Datei */
+	/** Determines the sync date based on the currently open file */
 	private detectSyncDate(): string {
 		const yesterday = this.yesterdayString();
 		const activeFile = this.app.workspace.getActiveFile();
@@ -213,17 +224,17 @@ export default class HealthSyncPlugin extends Plugin {
 		const noteDate = this.dateFromDailyNote(activeFile);
 		if (!noteDate) return yesterday;
 
-		// Heute → gestern holen; alles andere → genau diesen Tag
+		// Today → use yesterday; anything else → use that exact day
 		return noteDate === this.todayString() ? yesterday : noteDate;
 	}
 
-	/** BrowserWindow-Login aus Settings heraus */
+	/** BrowserWindow login from settings */
 	async loginViaBrowser(): Promise<void> {
 		const lang = this.settings.language;
 		try {
 			const success = await this.garminProvider.authenticate();
 			if (success) {
-				// Auto-Sync wieder aktivieren bei erfolgreichem Login
+				// Re-enable auto-sync on successful login
 				this.settings.autoSyncPaused = false;
 				await this.saveSession();
 				await this.saveSettings();
@@ -237,21 +248,21 @@ export default class HealthSyncPlugin extends Plugin {
 		}
 	}
 
-	/** Logout — Session loeschen */
+	/** Logout — clear session */
 	async logout(): Promise<void> {
 		this.garminProvider.setSession(null);
 		this.settings.garminSession = "";
 		await this.saveSettings();
 	}
 
-	/** Prueft ob eine gueltige Session besteht */
+	/** Checks whether a valid session exists */
 	isSessionValid(): boolean {
 		return this.garminProvider.isSessionValid();
 	}
 
-	/** Pfad und Format aus Periodic Notes / Daily Notes uebernehmen falls nicht manuell gesetzt */
+	/** Detect path and format from Periodic Notes / Daily Notes if not manually configured */
 	private autoDetectDailyNotePath(): void {
-		if (this.settings.dailyNotePath) return; // Manuell gesetzt — nicht ueberschreiben
+		if (this.settings.dailyNotePath) return; // Manually configured — do not overwrite
 
 		// Periodic Notes Plugin
 		const periodicNotes = (this.app as unknown as { plugins: { plugins: Record<string, { settings?: { daily?: { folder?: string; format?: string } } }> } })
@@ -288,7 +299,7 @@ export default class HealthSyncPlugin extends Plugin {
 			}
 		}
 
-		// Sprache beim ersten Start aus Obsidian uebernehmen
+		// Detect language from Obsidian on first launch
 		if (!saved?.language) {
 			const obsidianLang = document.documentElement.lang?.slice(0, 2) ?? "en";
 			const supported = ["en", "de", "zh", "ja", "es", "fr"];
@@ -319,7 +330,7 @@ export default class HealthSyncPlugin extends Plugin {
 		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 	}
 
-	/** Prueft ob eine Datei eine Daily Note fuer eines der angegebenen Daten ist */
+	/** Checks whether a file is a daily note for one of the given dates */
 	private isDailyNote(file: TFile, dates: string[]): boolean {
 		for (const date of dates) {
 			if (this.matchesDailyNote(file, date)) return true;
@@ -327,18 +338,18 @@ export default class HealthSyncPlugin extends Plugin {
 		return false;
 	}
 
-	/** Extrahiert das Datum aus einer Daily Note, oder null falls keine */
+	/** Extracts the date from a daily note, or null if not a daily note */
 	private dateFromDailyNote(file: TFile): string | null {
 		const format = this.settings.dailyNoteFormat || "YYYY-MM-DD";
 		const path = this.settings.dailyNotePath || "";
 
-		// Erwarteten Pfad-Prefix pruefen (auch Unterverzeichnisse erlauben)
+		// Check expected path prefix (also allow subdirectories)
 		const dir = file.path.substring(0, file.path.lastIndexOf("/"));
 		if (path && dir !== path && !dir.startsWith(path + "/")) return null;
 		if (!path && dir !== "") return null;
 
-		// Dateiname gegen Format matchen (YYYY-MM-DD → Regex)
-		// Zuerst Platzhalter temporaer ersetzen, dann Sonderzeichen escapen, dann Gruppen einsetzen
+		// Match filename against format (YYYY-MM-DD → regex)
+		// First replace placeholders temporarily, then escape special chars, then insert groups
 		const escaped = format
 			.replace("YYYY", "\x01")
 			.replace("MM", "\x02")
@@ -358,7 +369,7 @@ export default class HealthSyncPlugin extends Plugin {
 	}
 }
 
-/** Modal fuer Backfill Datumsbereich */
+/** Modal for backfill date range */
 class BackfillModal extends Modal {
 	private onSubmit: (from: string, to: string) => void;
 	private lang: string;

@@ -4,16 +4,16 @@ import { applyPrefix } from "./metrics";
 import { reverseGeocode } from "./geocoding";
 
 /**
- * Sucht eine Daily Note rekursiv im angegebenen Verzeichnis und allen Unterverzeichnissen.
- * Gibt den TFile zurueck falls gefunden, sonst null.
+ * Searches for a daily note recursively in the given directory and all subdirectories.
+ * Returns the TFile if found, null otherwise.
  */
 function findDailyNoteRecursive(app: App, fileName: string, basePath: string): TFile | null {
-	// 1. Direkt im Hauptverzeichnis pruefen (schneller Pfad)
+	// 1. Check directly in root directory (fast path)
 	const directPath = normalizePath(`${basePath}/${fileName}.md`);
 	const directFile = app.vault.getAbstractFileByPath(directPath);
 	if (directFile instanceof TFile) return directFile;
 
-	// 2. Rekursiv in Unterverzeichnissen suchen
+	// 2. Search recursively in subdirectories
 	const baseFolder = app.vault.getAbstractFileByPath(normalizePath(basePath));
 	if (!(baseFolder instanceof TFolder)) return null;
 
@@ -33,7 +33,7 @@ function findInFolder(folder: TFolder, targetName: string): TFile | null {
 	return null;
 }
 
-/** Erstellt einen Ordner inkl. aller Eltern-Verzeichnisse */
+/** Creates a folder including all parent directories */
 async function ensureFolderExists(app: App, folderPath: string): Promise<void> {
 	const normalized = normalizePath(folderPath);
 	if (app.vault.getAbstractFileByPath(normalized)) return;
@@ -48,8 +48,8 @@ async function ensureFolderExists(app: App, folderPath: string): Promise<void> {
 }
 
 /**
- * Schreibt Gesundheitsdaten als Frontmatter-Properties in eine Daily Note.
- * Erstellt die Daily Note falls sie nicht existiert.
+ * Writes health data as frontmatter properties into a daily note.
+ * Creates the daily note if it does not exist.
  */
 export async function writeToDailyNote(
 	app: App,
@@ -66,11 +66,11 @@ export async function writeToDailyNote(
 ): Promise<void> {
 	const fileName = formatDate(date, options.dailyNoteFormat);
 
-	// Rekursiv nach bestehender Daily Note suchen
+	// Search for existing daily note recursively
 	let file: TFile | null = findDailyNoteRecursive(app, fileName, options.dailyNotePath);
 
 	if (!file) {
-		// Neue Daily Note erstellen (ggf. mit Unterverzeichnissen aus dem Format)
+		// Create new daily note (optionally with subdirectories from the format)
 		const filePath = normalizePath(`${options.dailyNotePath}/${fileName}.md`);
 		const fileDir = filePath.substring(0, filePath.lastIndexOf("/"));
 		if (fileDir) {
@@ -91,7 +91,7 @@ export async function writeToDailyNote(
 		properties[applyPrefix(key, options.prefix)] = value;
 	}
 
-	// Maschinenlesbare Trainings-Daten (optional)
+	// Machine-readable training data (optional)
 	if (options.writeTrainings && data.trainings && data.trainings.length > 0) {
 		properties[applyPrefix("trainings", options.prefix)] = data.trainings as unknown as Record<string, unknown>[];
 	}
@@ -109,8 +109,8 @@ export async function writeToDailyNote(
 }
 
 /**
- * Aktualisiert oder ergaenzt Frontmatter-Properties in einer Datei.
- * Bestehende Properties werden ueberschrieben, andere bleiben erhalten.
+ * Updates or adds frontmatter properties in a file.
+ * Existing properties are overwritten, others are preserved.
  */
 async function updateFrontmatter(
 	app: App,
@@ -123,13 +123,13 @@ async function updateFrontmatter(
 		}
 	};
 
-	// A: Praeventiv doppelte Frontmatter-Keys bereinigen
+	// A: Proactively clean up duplicate frontmatter keys
 	await deduplicateFrontmatter(app, file);
 
 	try {
 		await app.fileManager.processFrontMatter(file, applyProperties);
 	} catch (e) {
-		// B: Falls YAML trotzdem fehlschlaegt, aggressiver bereinigen und nochmal versuchen
+		// B: If YAML still fails, clean more aggressively and retry
 		if (e instanceof Error && e.message.includes("Map keys must be unique")) {
 			console.warn("Health Sync: Fixing corrupt frontmatter in", file.path);
 			await deduplicateFrontmatter(app, file);
@@ -141,8 +141,8 @@ async function updateFrontmatter(
 }
 
 /**
- * Bereinigt doppelte Top-Level-Keys im Frontmatter einer Datei.
- * Behaelt jeweils den letzten Wert (neueste Daten).
+ * Removes duplicate top-level keys from a file's frontmatter.
+ * Keeps the last occurrence of each key (most recent data).
  */
 async function deduplicateFrontmatter(app: App, file: TFile): Promise<void> {
 	const content = await app.vault.read(file);
@@ -152,7 +152,7 @@ async function deduplicateFrontmatter(app: App, file: TFile): Promise<void> {
 	const fmContent = fmMatch[1]!;
 	const lines = fmContent.split("\n");
 
-	// Top-Level-Keys und ihre Zeilenbereiche identifizieren
+	// Identify top-level keys and their line ranges
 	const entries: { key: string; start: number; end: number }[] = [];
 	for (let i = 0; i < lines.length; i++) {
 		const keyMatch = lines[i]!.match(/^([a-zA-Z_][\w]*)\s*:/);
@@ -160,12 +160,12 @@ async function deduplicateFrontmatter(app: App, file: TFile): Promise<void> {
 			if (entries.length > 0) entries[entries.length - 1]!.end = i - 1;
 			entries.push({ key: keyMatch[1]!, start: i, end: i });
 		} else if (entries.length > 0) {
-			// Continuation-Zeile (z.B. YAML-Array) → gehoert zum letzten Key
+			// Continuation line (e.g. YAML array) — belongs to the last key
 			entries[entries.length - 1]!.end = i;
 		}
 	}
 
-	// Duplikate finden — letztes Vorkommen jedes Keys behalten
+	// Find duplicates — keep the last occurrence of each key
 	const lastIndex = new Map<string, number>();
 	let hasDuplicates = false;
 	for (let i = 0; i < entries.length; i++) {
@@ -192,8 +192,8 @@ async function deduplicateFrontmatter(app: App, file: TFile): Promise<void> {
 }
 
 /**
- * Einfache Datumsformatierung fuer Daily Note Dateinamen.
- * Unterstuetzt YYYY, MM, DD Platzhalter.
+ * Simple date formatting for daily note file names.
+ * Supports YYYY, MM, DD placeholders.
  */
 function formatDate(dateStr: string, format: string): string {
 	const [year, month, day] = dateStr.split("-");

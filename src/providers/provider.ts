@@ -1,4 +1,4 @@
-/** Strukturierte Trainingsdaten fuer maschinenlesbare Ausgabe */
+/** Structured training data for machine-readable output */
 export interface TrainingEntry {
 	type: string;
 	category: string;
@@ -8,37 +8,37 @@ export interface TrainingEntry {
 	calories?: number;
 }
 
-/** Normalisierte Gesundheitsdaten — provider-unabhaengig */
+/** Normalized health data — provider-independent */
 export interface HealthData {
-	/** Metriken als Key-Value (normalisierte Keys) */
+	/** Metrics as key-value pairs (normalized keys) */
 	metrics: Record<string, number | string>;
-	/** Aktivitaeten/Trainings als Key-Value (human-readable) */
+	/** Activities/trainings as key-value pairs (human-readable) */
 	activities: Record<string, string>;
-	/** Strukturierte Trainingsdaten (maschinenlesbar, optional) */
+	/** Structured training data (machine-readable, optional) */
 	trainings?: TrainingEntry[];
-	/** Startkoordinaten der ersten Activity mit GPS */
+	/** Start coordinates of the first activity with GPS */
 	startLocation?: { lat: number; lon: number };
 }
 
-/** Interface das jeder Health-Provider implementiert */
+/** Interface implemented by every health provider */
 export interface HealthProvider {
-	/** Eindeutiger Name des Providers */
+	/** Unique provider identifier */
 	readonly id: string;
-	/** Anzeigename */
+	/** Display name */
 	readonly name: string;
 
-	/** Prueft ob gueltige Credentials vorhanden sind */
+	/** Checks whether valid credentials are available */
 	isConfigured(): boolean;
 
-	/** Login durchfuehren, gibt true bei Erfolg zurueck */
+	/** Perform login, returns true on success */
 	authenticate(): Promise<boolean>;
 
-	/** Prueft ob die aktuelle Session noch gueltig ist */
+	/** Checks whether the current session is still valid */
 	isSessionValid(): boolean;
 
-	/** Gesundheitsdaten fuer ein bestimmtes Datum abrufen */
+	/** Fetch health data for a specific date */
 	fetchData(date: string, enabledMetrics: string[]): Promise<HealthData>;
 
-	/** Empfohlene Pause zwischen Daten bei Batch-Operationen (ms) — optional */
+	/** Recommended delay between dates in batch operations (ms) — optional */
 	getRecommendedBatchDelay?(enabledMetrics: string[]): number;
 }

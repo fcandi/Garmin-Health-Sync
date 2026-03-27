@@ -1,7 +1,7 @@
 import { normalizeActivityKey, getActivityCategory } from "../../activity-keys";
 import type { TrainingEntry } from "../provider";
 
-/** Konvertiert Sekunden in "Xh Ymin" Format */
+/** Converts seconds to "Xh Ymin" format */
 export function secondsToHoursMin(seconds: number | null | undefined): string | null {
 	if (seconds == null || seconds <= 0) return null;
 	const hours = Math.floor(seconds / 3600);
@@ -9,12 +9,12 @@ export function secondsToHoursMin(seconds: number | null | undefined): string | 
 	return `${hours}h ${minutes}min`;
 }
 
-/** Rundet auf eine Nachkommastelle */
+/** Rounds to one decimal place */
 function round1(value: number): number {
 	return Math.round(value * 10) / 10;
 }
 
-/** Sicherer Zugriff auf verschachtelte Properties */
+/** Safe access to nested properties */
 function get(obj: Record<string, unknown>, path: string): unknown {
 	const parts = path.split(".");
 	let current: unknown = obj;
@@ -25,7 +25,7 @@ function get(obj: Record<string, unknown>, path: string): unknown {
 	return current;
 }
 
-/** Mappt Garmin Daily Summary auf normalisierte Metriken */
+/** Maps Garmin daily summary to normalized metrics */
 export function mapDailySummary(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
 
@@ -60,7 +60,7 @@ export function mapDailySummary(data: Record<string, unknown>, enabled: Set<stri
 	return result;
 }
 
-/** Mappt Garmin Sleep Daten auf normalisierte Metriken */
+/** Maps Garmin sleep data to normalized metrics */
 export function mapSleepData(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
 
@@ -95,7 +95,7 @@ export function mapSleepData(data: Record<string, unknown>, enabled: Set<string>
 	return result;
 }
 
-/** Mappt HRV Daten */
+/** Maps HRV data */
 export function mapHrvData(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
 	if (!enabled.has("hrv")) return result;
@@ -106,12 +106,12 @@ export function mapHrvData(data: Record<string, unknown>, enabled: Set<string>):
 	return result;
 }
 
-/** Mappt Body Battery Daten (Garmin gibt ein Objekt zurueck, kein Array) */
+/** Maps body battery data (Garmin returns an object, not an array) */
 export function mapBodyBattery(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
 	if (!enabled.has("body_battery") || Object.keys(data).length === 0) return result;
 
-	// Body Battery kann in verschiedenen Feldern stecken
+	// Body battery value may be in different fields
 	const charged = data["charged"]
 		?? get(data, "bodyBatteryStatList.0.charged")
 		?? data["bodyBatteryMostRecentValue"]
@@ -121,7 +121,7 @@ export function mapBodyBattery(data: Record<string, unknown>, enabled: Set<strin
 	return result;
 }
 
-/** Mappt SpO2 Daten */
+/** Maps SpO2 data */
 export function mapSpO2(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
 	if (!enabled.has("spo2")) return result;
@@ -132,7 +132,7 @@ export function mapSpO2(data: Record<string, unknown>, enabled: Set<string>): Re
 	return result;
 }
 
-/** Mappt Respiration Daten */
+/** Maps respiration data */
 export function mapRespiration(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
 	if (!enabled.has("respiration_rate")) return result;
@@ -143,7 +143,7 @@ export function mapRespiration(data: Record<string, unknown>, enabled: Set<strin
 	return result;
 }
 
-/** Mappt Gewichts-Daten */
+/** Maps weight data */
 export function mapWeight(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
 
@@ -189,23 +189,23 @@ export function mapTrainingStatus(data: Record<string, unknown>, enabled: Set<st
 	return result;
 }
 
-/** Ergebnis von mapActivities: human-readable + strukturiert */
+/** Result of mapActivities: human-readable + structured */
 export interface ActivityResult {
-	/** Human-readable Key-Value Paare (z.B. hiking: "8.2 km · 157min") */
+	/** Human-readable key-value pairs (e.g. hiking: "8.2 km · 157min") */
 	display: Record<string, string>;
-	/** Strukturierte Trainingsdaten fuer maschinenlesbare Ausgabe */
+	/** Structured training data for machine-readable output */
 	trainings: TrainingEntry[];
-	/** Startkoordinaten der ersten Activity mit GPS (fuer Reverse Geocoding) */
+	/** Start coordinates of the first activity with GPS (for reverse geocoding) */
 	startLocation: { lat: number; lon: number } | null;
 }
 
-/** Mappt Garmin Activities auf normalisierte Trainings-Strings */
+/** Maps Garmin activities to normalized training strings */
 export function mapActivities(activities: Record<string, unknown>[]): ActivityResult {
 	const grouped: Record<string, { count: number; distanceKm: number; durationMin: number; avgHr: number; hrCount: number; calories: number }> = {};
 	let startLocation: { lat: number; lon: number } | null = null;
 
 	for (const act of activities) {
-		// typeKey von der API normalisieren (e_bike_fitness → e_bike, etc.)
+		// Normalize typeKey from API (e_bike_fitness → e_bike, etc.)
 		const typeKeyValue = get(act, "activityType.typeKey");
 		const rawKey = typeof typeKeyValue === "string" ? typeKeyValue : "workout";
 		const typeName = normalizeActivityKey(rawKey);
@@ -226,7 +226,7 @@ export function mapActivities(activities: Record<string, unknown>[]): ActivityRe
 			group.hrCount++;
 		}
 
-		// Erste Activity mit GPS-Koordinaten merken
+		// Record the first activity with GPS coordinates
 		if (!startLocation) {
 			const lat = Number(act["startLatitude"]);
 			const lon = Number(act["startLongitude"]);

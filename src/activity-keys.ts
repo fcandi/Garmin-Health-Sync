@@ -1,14 +1,14 @@
 /**
- * Normalisierung von Provider-spezifischen Activity-Keys auf kanonische Keys.
+ * Normalization of provider-specific activity keys to canonical keys.
  *
- * Garmin-typeKeys dienen als Basis-Standard. Nur unnoetig sperrige Keys
- * werden normalisiert. Unbekannte Keys werden lowercase+underscore durchgereicht.
+ * Garmin typeKeys serve as the base standard. Only unnecessarily verbose keys
+ * are normalized. Unknown keys are passed through as lowercase+underscore.
  *
- * Spaetere Provider (Fitbit, Oura, etc.) mappen ihre eigenen Bezeichnungen
- * auf dieselben kanonischen Keys.
+ * Future providers (Fitbit, Oura, etc.) will map their own identifiers
+ * to the same canonical keys.
  */
 
-/** Cleanup-Mapping: Garmin typeKey → kanonischer Key */
+/** Cleanup mapping: Garmin typeKey → canonical key */
 const KEY_CLEANUP: Record<string, string> = {
 	e_bike_fitness: "e_bike",
 	e_bike_mountain: "e_mtb",
@@ -18,7 +18,7 @@ const KEY_CLEANUP: Record<string, string> = {
 	fitness_equipment: "gym_equipment",
 };
 
-/** Kategorie-Zuordnung fuer maschinenlesbare Trainings-Daten */
+/** Category mapping for machine-readable training data */
 const CATEGORY_MAP: Record<string, string> = {
 	// Cycling
 	cycling: "cycling",
@@ -126,8 +126,8 @@ const CATEGORY_MAP: Record<string, string> = {
 };
 
 /**
- * Normalisiert einen Provider-Activity-Key auf den kanonischen Key.
- * Unbekannte Keys werden lowercase + underscore normalisiert durchgereicht.
+ * Normalizes a provider activity key to the canonical key.
+ * Unknown keys are passed through as lowercase + underscore.
  */
 export function normalizeActivityKey(providerKey: string): string {
 	const raw = providerKey.toLowerCase().replace(/\s+/g, "_");
@@ -135,8 +135,8 @@ export function normalizeActivityKey(providerKey: string): string {
 }
 
 /**
- * Gibt die Kategorie fuer einen (bereits normalisierten) Activity-Key zurueck.
- * Fallback: "other"
+ * Returns the category for an already-normalized activity key.
+ * Falls back to "other".
  */
 export function getActivityCategory(normalizedKey: string): string {
 	return CATEGORY_MAP[normalizedKey] ?? "other";

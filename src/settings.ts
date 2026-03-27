@@ -11,14 +11,14 @@ export interface HealthSyncSettings {
 	dailyNoteFormat: string;
 	dailyNoteTemplate: string;
 	enabledMetrics: Record<string, boolean>;
-	lastSyncDate: string; // Legacy — wird nicht mehr geschrieben
-	lastSyncTimes: Record<string, number>; // Datum → letzter Sync-Timestamp (epoch ms)
+	lastSyncDate: string; // Legacy — no longer written
+	lastSyncTimes: Record<string, number>; // Date → last sync timestamp (epoch ms)
 	garminSession: string;
 	language: string;
 	autoSync: boolean;
-	autoSyncPaused: boolean; // Bei Auth-Fehler automatisch pausiert
-	writeTrainings: boolean; // Maschinenlesbare Trainings-Daten im Frontmatter
-	writeWorkoutLocation: boolean; // Reverse-Geocoded Workout-Ort im Frontmatter
+	autoSyncPaused: boolean; // Automatically paused on auth error
+	writeTrainings: boolean; // Machine-readable training data in frontmatter
+	writeWorkoutLocation: boolean; // Reverse-geocoded workout location in frontmatter
 }
 
 export const DEFAULT_SETTINGS: HealthSyncSettings = {
@@ -51,7 +51,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 		const lang = this.plugin.settings.language;
 		containerEl.empty();
 
-		// Sprache
+		// Language
 		new Setting(containerEl)
 			.setName(t("settingsLanguage", lang))
 			.setDesc(t("settingsLanguageDesc", lang))
@@ -173,7 +173,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		// Maschinenlesbare Trainings
+		// Machine-readable trainings
 		new Setting(containerEl)
 			.setName(t("settingsWriteTrainings", lang))
 			.setDesc(t("settingsWriteTrainingsDesc", lang))
@@ -184,7 +184,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		// Standard Metriken
+		// Standard metrics
 		new Setting(containerEl).setName(t("settingsMetricsStandard", lang)).setHeading();
 		for (const metric of METRICS.filter(m => m.category === "standard")) {
 			const labelKey = `metric_${metric.key}` as TranslationKeys;
@@ -198,7 +198,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					}));
 		}
 
-		// Erweiterte Metriken (eingeklappt)
+		// Extended metrics (collapsed)
 		const extDetails = containerEl.createEl("details");
 		extDetails.createEl("summary", { text: t("settingsMetricsExtendedDesc", lang) });
 

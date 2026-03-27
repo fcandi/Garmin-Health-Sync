@@ -28,7 +28,7 @@ export class GarminProvider implements HealthProvider {
 	}
 
 	isConfigured(): boolean {
-		// BrowserWindow-Login braucht keine vorab-konfigurierten Credentials
+		// BrowserWindow login requires no pre-configured credentials
 		return true;
 	}
 
@@ -44,15 +44,22 @@ export class GarminProvider implements HealthProvider {
 		this.api.closeBrowser();
 	}
 
-	/** Empfohlene Pause zwischen Daten bei Batch-Operationen (ms) */
+	/** Recommended delay between dates in batch operations (ms) */
 	getRecommendedBatchDelay(enabledMetrics: string[]): number {
 		const endpoints = getRequiredEndpoints(enabledMetrics);
 		return calculateBatchDelay(endpoints.length);
 	}
 
 	async fetchData(date: string, enabledMetrics: string[]): Promise<HealthData> {
+		// Upfront check: ensure browser session is ready before starting requests.
+		// If login fails, login_required is thrown — prevents silent "no data" result.
+		if (!this.api.isBrowserReady()) {
+			const ok = await this.api.ensureBrowser();
+			if (!ok) throw new Error("login_required");
+		}
+
 		const enabled = new Set(enabledMetrics);
-		// Nur benoetigte Endpoints aufrufen
+		// Only call required endpoints
 		const requiredEndpoints = getRequiredEndpoints(enabledMetrics);
 		this.api.setRequiredEndpoints(requiredEndpoints);
 		console.debug("Health Sync: Endpoints:", requiredEndpoints.join(", "), `(${requiredEndpoints.length}/${enabledMetrics.length} metrics)`);

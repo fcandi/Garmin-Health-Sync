@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-health-sync",
 	"name": "Health Sync",
-	"version": "0.9.1",
+	"version": "0.9.2",
 	"minAppVersion": "0.15.0",
 	"description": "Sync health data from smartwatches (Garmin, etc.) into your Daily Notes as frontmatter properties.",
 	"author": "fcandi",

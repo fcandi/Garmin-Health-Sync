@@ -10,7 +10,7 @@ const SIGNIN_PARAMS: Record<string, string> = {
 
 const API_BASE = `${CONNECT_BASE}/gc-api`;
 
-/** Direct API endpoint URLs — aufgerufen via electron.net statt BrowserWindow-Interceptor */
+/** Direct API endpoint URLs — called via electron.net instead of BrowserWindow interceptor */
 const ENDPOINTS: Record<string, (displayName: string, date: string) => string> = {
 	dailySummary: (dn, date) => `${API_BASE}/usersummary-service/usersummary/daily/${dn}?calendarDate=${date}`,
 	sleep: (dn, date) => `${API_BASE}/wellness-service/wellness/dailySleepData/${dn}?date=${date}&nonSleepBufferMinutes=60`,
@@ -24,13 +24,13 @@ const ENDPOINTS: Record<string, (displayName: string, date: string) => string> =
 	trainingReadiness: (_, date) => `${API_BASE}/metrics-service/metrics/trainingreadiness/${date}`,
 };
 
-/** Welche Metriken brauchen welchen Endpoint */
+/** Which metrics require which endpoint */
 const ENDPOINT_METRIC_MAP: Record<string, string[]> = {
 	dailySummary: ["steps", "resting_hr", "stress", "calories_total", "calories_active", "distance_km", "floors", "intensity_min"],
 	sleep: ["sleep_duration", "sleep_score", "sleep_deep", "sleep_light", "sleep_rem", "sleep_awake"],
 	hrv: ["hrv"],
 	bodyBattery: ["body_battery"],
-	activities: [], // Immer laden — dynamische Frontmatter-Keys
+	activities: [], // Always load — dynamic frontmatter keys
 	weight: ["weight_kg", "body_fat_pct"],
 	spo2: ["spo2"],
 	respiration: ["respiration_rate"],
@@ -38,10 +38,10 @@ const ENDPOINT_METRIC_MAP: Record<string, string[]> = {
 	trainingReadiness: ["training_readiness"],
 };
 
-/** Bestimmt welche Endpoints fuer die aktivierten Metriken noetig sind */
+/** Determines which endpoints are required for the enabled metrics */
 export function getRequiredEndpoints(enabledMetrics: string[]): string[] {
 	const enabled = new Set(enabledMetrics);
-	const endpoints: string[] = ["activities"]; // Immer laden
+	const endpoints: string[] = ["activities"]; // Always load
 
 	for (const [endpoint, metrics] of Object.entries(ENDPOINT_METRIC_MAP)) {
 		if (endpoint === "activities") continue;
@@ -53,11 +53,11 @@ export function getRequiredEndpoints(enabledMetrics: string[]): string[] {
 	return endpoints;
 }
 
-/** Berechnet empfohlene Pause zwischen Daten bei Batch-Operationen (ms) */
+/** Calculates recommended delay between dates in batch operations (ms) */
 export function calculateBatchDelay(endpointCount: number): number {
 	const maxDatesPerMinute = Math.floor(50 / Math.max(endpointCount, 1));
 	const cycleTimeMs = Math.ceil(60000 / maxDatesPerMinute);
-	// Minus ~2s geschaetzte Fetch-Dauer, mindestens 1s
+	// Subtract ~2s estimated fetch duration, minimum 1s
 	return Math.max(cycleTimeMs - 2000, 1000);
 }
 
@@ -95,7 +95,7 @@ export class GarminApi {
 		return this.session;
 	}
 
-	/** Setzt die Endpoints die beim naechsten Fetch aufgerufen werden */
+	/** Sets the endpoints to be called on the next fetch */
 	setRequiredEndpoints(endpoints: string[]): void {
 		this.requiredEndpoints = endpoints;
 	}
@@ -127,7 +127,7 @@ export class GarminApi {
 		const signinUrl = this.buildUrl(SSO_SIGNIN, SIGNIN_PARAMS);
 
 		return new Promise<boolean>((resolve) => {
-			// Versteckt starten wenn Session bekannt (Auto-Login erwartet)
+			// Start hidden if session is known (auto-login expected)
 			const hasSession = this.session !== null;
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
 		const authWindow: BrowserWindowType = new BrowserWindow({
@@ -142,31 +142,54 @@ export class GarminApi {
 			});
 
 			let resolved = false;
+			let pollInterval: ReturnType<typeof setInterval> | null = null;
 
-			// Bei jeder Seite: Padding + Interceptor injizieren
+			// Global timeouts — always active, regardless of the loaded page.
+			// Fix: when session cookies expire, Garmin loads the SSO page instead of
+			// the app. isConnectPage would be false → timeouts never set → promise hangs forever.
+			const showTimer = setTimeout(() => {
+				if (!resolved && !authWindow.isDestroyed()) {
+					console.debug("Health Sync: Auto-login taking long, showing window...");
+					authWindow.show();
+				}
+			}, 10000);
+
+			const globalTimeout = setTimeout(() => {
+				if (!resolved) {
+					if (pollInterval) clearInterval(pollInterval);
+					resolved = true;
+					console.error("Health Sync: Login timeout");
+					if (!authWindow.isDestroyed()) authWindow.close();
+					resolve(false);
+				}
+			}, 120000);
+
+			// On every page: inject padding + interceptor
 			authWindow.webContents.on("dom-ready", () => {
 				void authWindow.webContents.insertCSS("body { padding: 12px !important; }");
 				this.injectInterceptor(authWindow);
 			});
 
-			// Warten bis Connect geladen ist, dann displayName aus App-Traffic extrahieren
+			// Wait until Connect is loaded, then extract displayName from app traffic
 			authWindow.webContents.on("did-finish-load", () => {
 				const url = authWindow.webContents.getURL();
 				console.debug("Health Sync: Page loaded:", url);
 
 				const isConnectPage = url.startsWith(APP_BASE) || url.startsWith(MODERN_BASE);
 				if (isConnectPage && !resolved) {
-					// Polling: warten bis die App den displayName in einer URL verraten hat
-					const pollInterval = setInterval(() => {
-						if (resolved) { clearInterval(pollInterval); return; }
+					// Polling: wait until the app reveals the displayName in a URL
+					pollInterval = setInterval(() => {
+						if (resolved) { clearInterval(pollInterval!); return; }
 						void (async () => {
 						try {
 							const name = await authWindow.webContents.executeJavaScript(
 								`window.__hs_displayName || ""`
 							);
 							if (name) {
-								clearInterval(pollInterval);
+								clearInterval(pollInterval!);
 								resolved = true;
+								clearTimeout(showTimer);
+								clearTimeout(globalTimeout);
 								this.session = { displayName: name, timestamp: Date.now() };
 								this.browserWindow = authWindow;
 								authWindow.hide();
@@ -180,29 +203,13 @@ export class GarminApi {
 						}
 						})();
 					}, 2000);
-
-					// Nach 10s Fenster anzeigen falls noch nicht eingeloggt
-					setTimeout(() => {
-						if (!resolved && !authWindow.isDestroyed()) {
-							console.debug("Health Sync: Auto-login taking long, showing window...");
-							authWindow.show();
-						}
-					}, 10000);
-
-					// Timeout nach 120 Sekunden
-					setTimeout(() => {
-						if (!resolved) {
-							clearInterval(pollInterval);
-							resolved = true;
-							console.error("Health Sync: Login timeout");
-							authWindow.close();
-							resolve(false);
-						}
-					}, 120000);
 				}
 			});
 
 			authWindow.on("closed", () => {
+				clearTimeout(showTimer);
+				clearTimeout(globalTimeout);
+				if (pollInterval) clearInterval(pollInterval);
 				if (this.browserWindow === authWindow) this.browserWindow = null;
 				if (!resolved) { resolved = true; resolve(false); }
 			});
@@ -211,7 +218,7 @@ export class GarminApi {
 		});
 	}
 
-	/** Interceptor in die Seite injizieren — faengt displayName und API-Responses ab */
+	/** Inject interceptor into the page — captures displayName and API responses */
 	private injectInterceptor(win: BrowserWindowType): void {
 		win.webContents.executeJavaScript(`
 			(function() {
@@ -221,12 +228,12 @@ export class GarminApi {
 				window.__hs_responses = {};
 				window.__hs_apiHeaders = null;
 
-				// Fetch abfangen
+				// Intercept fetch
 				const origFetch = window.fetch;
 				window.fetch = function(input, init) {
 					const url = typeof input === "string" ? input : (input?.url || "");
 
-					// API-Headers abfangen (v.a. connect-csrf-token fuer Direct Fetch)
+					// Capture API headers (especially connect-csrf-token for direct fetch)
 					if (url.includes("/gc-api/") || url.includes("/proxy/")) {
 						try {
 							var h = {};
@@ -247,7 +254,7 @@ export class GarminApi {
 					}
 					const result = origFetch.apply(this, arguments);
 
-					// displayName aus URLs extrahieren
+					// Extract displayName from URLs
 					const nameMatch = url.match(/\\/device-info\\/all\\/([^?/]+)/)
 						|| url.match(/\\/usersummary\\/daily\\/([^?/]+)/)
 						|| url.match(/\\/socialProfile\\/([^?/]+)/)
@@ -256,7 +263,7 @@ export class GarminApi {
 						window.__hs_displayName = nameMatch[1];
 					}
 
-					// API-Responses abfangen
+					// Capture API responses
 					if (url.includes("/gc-api/") || url.includes("/proxy/")) {
 						result.then(r => r.clone().json()).then(data => {
 							if (url.includes("usersummary/daily/") && url.includes("calendarDate"))
@@ -285,7 +292,7 @@ export class GarminApi {
 					return result;
 				};
 
-				// XHR auch abfangen (Garmin nutzt beides)
+				// Also intercept XHR (Garmin uses both)
 				const origOpen = XMLHttpRequest.prototype.open;
 				const origSend = XMLHttpRequest.prototype.send;
 				XMLHttpRequest.prototype.open = function(method, url) {
@@ -301,7 +308,7 @@ export class GarminApi {
 					this.addEventListener("load", function() {
 						try {
 							if (url.includes("graphql") && this.responseText) {
-								// GraphQL responses koennen auch Daten enthalten
+								// GraphQL responses can also contain data
 								const data = JSON.parse(this.responseText);
 								if (data?.data) window.__hs_responses.graphql = data.data;
 							}
@@ -313,28 +320,28 @@ export class GarminApi {
 		`).catch(() => {});
 	}
 
-	/** BrowserWindow sicherstellen */
+	/** Ensure BrowserWindow is ready */
 	async ensureBrowser(): Promise<boolean> {
 		if (this.isBrowserReady()) return true;
 		return this.loginViaBrowser();
 	}
 
-	// --- Daten abrufen ---
+	// --- Data fetching ---
 
-	/** Daten fuer ein Datum abrufen: zuerst Direct Fetch im BrowserWindow-Context, Fallback auf Navigation */
+	/** Fetch data for a date: first try direct fetch in BrowserWindow context, fall back to navigation */
 	async fetchDataForDate(date: string): Promise<Record<string, unknown>> {
 		if (!this.session?.displayName) {
 			throw new Error("Not logged in");
 		}
 
-		// BrowserWindow sicherstellen (Login falls noetig)
+		// Ensure BrowserWindow is ready (login if needed)
 		if (!this.isBrowserReady()) {
 			console.debug("Health Sync: Browser not ready, opening...");
 			const ok = await this.loginViaBrowser();
 			if (!ok) throw new Error("Could not open browser session");
 		}
 
-		// Fast Path: Parallel fetch() im BrowserWindow-Context (~1-2s)
+		// Fast path: parallel fetch() in BrowserWindow context (~1-2s)
 		try {
 			const data = await this.fetchDirectInBrowser(date);
 			if (Object.keys(data).length > 0) {
@@ -346,17 +353,17 @@ export class GarminApi {
 			console.debug("Health Sync: Direct fetch failed, falling back to navigation:", e);
 		}
 
-		// Slow Path: Seiten-Navigation + Interceptor (~10-15s)
+		// Slow path: page navigation + interceptor (~10-15s)
 		return this.fetchViaNavigation(date);
 	}
 
-	/** Alle benoetigten Endpoints parallel via fetch() im BrowserWindow-Context aufrufen */
+	/** Call all required endpoints in parallel via fetch() in the BrowserWindow context */
 	private async fetchDirectInBrowser(date: string): Promise<Record<string, unknown>> {
 		const dn = this.session!.displayName;
 		const endpointKeys = this.requiredEndpoints ?? Object.keys(ENDPOINTS);
 		if (endpointKeys.length === 0) return {};
 
-		// Pruefen ob wir API-Headers (v.a. CSRF-Token) von der App abgefangen haben
+		// Check if we captured API headers (especially CSRF token) from the app
 		const headersJson = await this.browserWindow!.webContents.executeJavaScript(
 			`JSON.stringify(window.__hs_apiHeaders || null)`
 		);
@@ -365,7 +372,7 @@ export class GarminApi {
 			return {};
 		}
 
-		// Alle fetch-Calls mit den abgefangenen Headers ausfuehren
+		// Execute all fetch calls with the captured headers
 		const fetchCalls = endpointKeys.map(key => {
 			const buildUrl = ENDPOINTS[key];
 			if (!buildUrl) return `Promise.resolve({ key: ${JSON.stringify(key)}, status: 0, data: null })`;
@@ -378,7 +385,7 @@ export class GarminApi {
 
 		const code = `Promise.all([${fetchCalls.join(",")}]).then(r => JSON.stringify(r))`;
 
-		// Timeout: falls BrowserWindow haengt
+		// Timeout: in case BrowserWindow hangs
 		const timeout = new Promise<never>((_, reject) =>
 			setTimeout(() => reject(new Error("BrowserWindow fetch timeout 15s")), 15000));
 
@@ -406,7 +413,7 @@ export class GarminApi {
 		return results;
 	}
 
-	/** Gleiche Response-Transformationen wie der BrowserWindow-Interceptor */
+	/** Same response transformations as the BrowserWindow interceptor */
 	private transformResponse(key: string, data: unknown): unknown {
 		if (key === "sleep") {
 			return (data as Record<string, unknown>)?.dailySleepDTO || data;
@@ -417,20 +424,20 @@ export class GarminApi {
 		return data;
 	}
 
-	/** Fallback: BrowserWindow zur Daily-Summary-Seite navigieren + Interceptor */
+	/** Fallback: navigate BrowserWindow to the daily summary page + interceptor */
 	private async fetchViaNavigation(date: string): Promise<Record<string, unknown>> {
-		// Gesammelte Responses zuruecksetzen
+		// Reset collected responses
 		await this.browserWindow!.webContents.executeJavaScript(`window.__hs_responses = {};`);
 
-		// Interceptor sicherstellen (falls Page-Context verloren)
+		// Re-inject interceptor (in case page context was lost)
 		this.injectInterceptor(this.browserWindow!);
 
-		// Zur Daily-Summary-Seite fuer das gewuenschte Datum navigieren
+		// Navigate to daily summary page for the requested date
 		const url = `${APP_BASE}/daily-summary/${date}`;
 		console.debug("Health Sync: Navigating to", url);
 		await this.browserWindow!.loadURL(url).catch(() => {});
 
-		// Warten bis die App die API-Calls gemacht hat
+		// Wait until the app has made its API calls
 		const maxWait = 15000;
 		const pollMs = 1000;
 		let waited = 0;
@@ -452,7 +459,7 @@ export class GarminApi {
 			}
 		}
 
-		// Alle gesammelten Responses auslesen
+		// Read all collected responses
 		const rawJson = await this.browserWindow!.webContents.executeJavaScript(`
 			JSON.stringify(window.__hs_responses || {})
 		`);
@@ -467,7 +474,7 @@ export class GarminApi {
 		return responses;
 	}
 
-	// --- Legacy API methods (jetzt via fetchDataForDate gebündelt) ---
+	// --- Legacy API methods (now bundled via fetchDataForDate) ---
 
 	async fetchDailySummary(date: string): Promise<Record<string, unknown>> {
 		const data = await this.getCachedOrFetch(date);
@@ -523,11 +530,11 @@ export class GarminApi {
 	}
 
 	async fetchHeartRate(date: string): Promise<Record<string, unknown>> {
-		// Heart Rate kommt aus dem Daily Summary
+		// Heart rate comes from the daily summary
 		return this.fetchDailySummary(date);
 	}
 
-	// --- Cache + Lock: pro Datum nur einmal navigieren ---
+	// --- Cache + lock: navigate only once per date ---
 
 	private cachedDate = "";
 	private cachedData: Record<string, unknown> = {};
@@ -538,12 +545,20 @@ export class GarminApi {
 			return this.cachedData;
 		}
 
-		// Lock: wenn schon ein Fetch laeuft, darauf warten
+		// Lock: if a fetch is already running, wait for it
 		if (this.fetchPromise) {
 			return this.fetchPromise;
 		}
 
-		this.fetchPromise = this.fetchDataForDate(date).then(data => {
+		const FETCH_TIMEOUT_MS = 30000;
+		const withTimeout = Promise.race([
+			this.fetchDataForDate(date),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error("fetch timeout")), FETCH_TIMEOUT_MS)
+			),
+		]);
+
+		this.fetchPromise = withTimeout.then(data => {
 			this.cachedData = data;
 			this.cachedDate = date;
 			this.fetchPromise = null;
@@ -556,7 +571,7 @@ export class GarminApi {
 		return this.fetchPromise;
 	}
 
-	/** Cache leeren (z.B. nach Sync) */
+	/** Clear the cache (e.g. after sync) */
 	clearCache(): void {
 		this.cachedDate = "";
 		this.cachedData = {};

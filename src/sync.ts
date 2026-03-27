@@ -13,7 +13,7 @@ export class SyncManager {
 		this.provider = provider;
 	}
 
-	/** Sync fuer ein bestimmtes Datum */
+	/** Sync for a specific date */
 	async syncDate(date: string, settings: HealthSyncSettings): Promise<boolean> {
 		if (!this.provider.isConfigured()) {
 			new Notice(t("noticeLoginRequired", settings.language));
@@ -23,7 +23,7 @@ export class SyncManager {
 		new Notice(t("noticeSyncing", settings.language));
 
 		try {
-			// Authentifizieren falls noetig
+			// Authenticate if needed
 			if (!this.provider.isSessionValid()) {
 				const authenticated = await this.provider.authenticate();
 				if (!authenticated) {
@@ -32,12 +32,12 @@ export class SyncManager {
 				}
 			}
 
-			// Aktivierte Metriken sammeln
+			// Collect enabled metrics
 			const enabledMetrics = Object.entries(settings.enabledMetrics)
 				.filter(([, enabled]) => enabled)
 				.map(([key]) => key);
 
-			// Daten abrufen
+			// Fetch data
 			const data = await this.provider.fetchData(date, enabledMetrics);
 
 			const hasData = Object.keys(data.metrics).length > 0 || Object.keys(data.activities).length > 0;
@@ -47,7 +47,7 @@ export class SyncManager {
 				return false;
 			}
 
-			// In Daily Note schreiben
+			// Write to daily note
 			await writeToDailyNote(this.app, date, data, {
 				dailyNotePath: settings.dailyNotePath,
 				dailyNoteFormat: settings.dailyNoteFormat,
@@ -60,13 +60,17 @@ export class SyncManager {
 			new Notice(t("noticeSyncSuccess", settings.language));
 			return true;
 		} catch (error) {
+			if (error instanceof Error && error.message === "login_required") {
+				new Notice(t("noticeLoginRequired", settings.language));
+				throw error; // Caller pauses autoSync
+			}
 			console.error("Health Sync: Sync failed", error);
 			new Notice(t("noticeSyncError", settings.language));
 			return false;
 		}
 	}
 
-	/** Backfill fuer einen Datumsbereich */
+	/** Backfill for a date range */
 	async backfill(fromDate: string, toDate: string, settings: HealthSyncSettings): Promise<number> {
 		if (!this.provider.isConfigured()) {
 			new Notice(t("noticeLoginRequired", settings.language));
@@ -88,7 +92,7 @@ export class SyncManager {
 			const dates = this.dateRange(fromDate, toDate);
 			let count = 0;
 
-			// Delay basierend auf Anzahl Endpoints berechnen (50 Req/Min Budget)
+			// Calculate delay based on number of endpoints (50 req/min budget)
 			const batchDelay = this.provider.getRecommendedBatchDelay?.(enabledMetrics) ?? 2000;
 			console.debug(`Health Sync: Backfill ${dates.length} dates, delay ${batchDelay}ms`);
 
@@ -109,7 +113,7 @@ export class SyncManager {
 						count++;
 					}
 
-					// Rate Limiting: dynamisch basierend auf Endpoint-Anzahl
+					// Rate limiting: dynamic based on endpoint count
 					await this.sleep(batchDelay);
 				} catch (error) {
 					console.warn(`Health Sync: Backfill failed for ${date}`, error);
