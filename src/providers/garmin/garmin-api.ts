@@ -317,7 +317,7 @@ export class GarminApi {
 					return origSend.apply(this, arguments);
 				};
 			})();
-		`).catch(() => {});
+		`).catch((e: unknown) => { console.debug("Health Sync: Interceptor injection failed:", e); });
 	}
 
 	/** Ensure BrowserWindow is ready */
@@ -386,8 +386,9 @@ export class GarminApi {
 		const code = `Promise.all([${fetchCalls.join(",")}]).then(r => JSON.stringify(r))`;
 
 		// Timeout: in case BrowserWindow hangs
+		const BROWSER_FETCH_TIMEOUT_MS = 15000;
 		const timeout = new Promise<never>((_, reject) =>
-			setTimeout(() => reject(new Error("BrowserWindow fetch timeout 15s")), 15000));
+			setTimeout(() => reject(new Error(`BrowserWindow fetch timeout ${BROWSER_FETCH_TIMEOUT_MS}ms`)), BROWSER_FETCH_TIMEOUT_MS));
 
 		const rawJson = await Promise.race([
 			this.browserWindow!.webContents.executeJavaScript(code),
@@ -539,14 +540,15 @@ export class GarminApi {
 	private cachedDate = "";
 	private cachedData: Record<string, unknown> = {};
 	private fetchPromise: Promise<Record<string, unknown>> | null = null;
+	private pendingDate = "";
 
 	private async getCachedOrFetch(date: string): Promise<Record<string, unknown>> {
 		if (this.cachedDate === date && Object.keys(this.cachedData).length > 0) {
 			return this.cachedData;
 		}
 
-		// Lock: if a fetch is already running, wait for it
-		if (this.fetchPromise) {
+		// Lock: if a fetch is already running for the same date, wait for it
+		if (this.fetchPromise && this.pendingDate === date) {
 			return this.fetchPromise;
 		}
 
@@ -558,13 +560,16 @@ export class GarminApi {
 			),
 		]);
 
+		this.pendingDate = date;
 		this.fetchPromise = withTimeout.then(data => {
 			this.cachedData = data;
 			this.cachedDate = date;
 			this.fetchPromise = null;
+			this.pendingDate = "";
 			return data;
 		}).catch(e => {
 			this.fetchPromise = null;
+			this.pendingDate = "";
 			throw e;
 		});
 

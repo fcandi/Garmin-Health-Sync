@@ -155,7 +155,7 @@ async function deduplicateFrontmatter(app: App, file: TFile): Promise<void> {
 	// Identify top-level keys and their line ranges
 	const entries: { key: string; start: number; end: number }[] = [];
 	for (let i = 0; i < lines.length; i++) {
-		const keyMatch = lines[i]!.match(/^([a-zA-Z_][\w]*)\s*:/);
+		const keyMatch = lines[i]!.match(/^([a-zA-Z_][\w-]*)\s*:/);
 		if (keyMatch) {
 			if (entries.length > 0) entries[entries.length - 1]!.end = i - 1;
 			entries.push({ key: keyMatch[1]!, start: i, end: i });

@@ -102,7 +102,7 @@ export default class HealthSyncPlugin extends Plugin {
 		const now = Date.now();
 		const RESYNC_WINDOW_MS = 72 * 60 * 60 * 1000; // 72h — more recent data may be overwritten
 		const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
-		const FIRST_COOLDOWN_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
+		const FIRST_RESYNC_AFTER_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
 		const syncTimes = this.settings.lastSyncTimes;
 
 		// Check last 7 days — which ones need a (re-)sync?
@@ -152,8 +152,8 @@ export default class HealthSyncPlugin extends Plugin {
 					synced++;
 					const isFirstSync = !this.settings.lastSyncTimes[date];
 					if (isFirstSync) {
-						// First sync: simulate short cooldown (30min)
-						this.settings.lastSyncTimes[date] = Date.now() - (COOLDOWN_MS - FIRST_COOLDOWN_MS);
+						// First sync: set timestamp so next re-sync fires after FIRST_RESYNC_AFTER_MS (30min)
+						this.settings.lastSyncTimes[date] = Date.now() - (COOLDOWN_MS - FIRST_RESYNC_AFTER_MS);
 					} else {
 						// Subsequent syncs: full 6h cooldown
 						this.settings.lastSyncTimes[date] = Date.now();
@@ -162,7 +162,7 @@ export default class HealthSyncPlugin extends Plugin {
 
 				// Rate-limit delay between dates (not after the last one)
 				if (i < datesToSync.length - 1) {
-					await new Promise(r => setTimeout(r, batchDelay));
+					await this.sleep(batchDelay);
 				}
 			}
 
@@ -366,6 +366,10 @@ export default class HealthSyncPlugin extends Plugin {
 
 	private matchesDailyNote(file: TFile, date: string): boolean {
 		return this.dateFromDailyNote(file) === date;
+	}
+
+	private sleep(ms: number): Promise<void> {
+		return new Promise(resolve => setTimeout(resolve, ms));
 	}
 }
 
