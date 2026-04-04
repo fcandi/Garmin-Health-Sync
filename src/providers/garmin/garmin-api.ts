@@ -445,6 +445,60 @@ export class GarminApi {
 		return data;
 	}
 
+	/** Fetch specific endpoints via direct fetch (used to supplement navigation results) */
+	private async fetchEndpointsDirect(date: string, endpointKeys: string[]): Promise<Record<string, unknown>> {
+		const dn = this.session!.displayName;
+
+		// Check if we have CSRF headers (should be captured by now from the page load)
+		const headersJson = await this.browserWindow!.webContents.executeJavaScript(
+			`JSON.stringify(window.__hs_apiHeaders || null)`
+		);
+		if (!headersJson || headersJson === "null") {
+			console.debug("Garmin Health Sync: No CSRF token available for supplemental fetch");
+			return {};
+		}
+
+		const fetchCalls = endpointKeys.map(key => {
+			const buildUrl = this.endpoints[key];
+			if (!buildUrl) return `Promise.resolve({ key: ${JSON.stringify(key)}, status: 0, data: null })`;
+			const url = buildUrl(dn, date);
+			return `fetch(${JSON.stringify(url)}, { headers: Object.assign({}, window.__hs_apiHeaders, { "NK": "NT", "Accept": "application/json" }) })
+				.then(r => r.ok ? r.json().then(d => ({ key: ${JSON.stringify(key)}, status: r.status, data: d }))
+					: ({ key: ${JSON.stringify(key)}, status: r.status, data: null }))
+				.catch(e => ({ key: ${JSON.stringify(key)}, status: -1, data: null, error: String(e) }))`;
+		});
+
+		const code = `Promise.all([${fetchCalls.join(",")}]).then(r => JSON.stringify(r))`;
+
+		const TIMEOUT_MS = 10000;
+		const timeout = new Promise<never>((_, reject) =>
+			setTimeout(() => reject(new Error(`Supplemental fetch timeout ${TIMEOUT_MS}ms`)), TIMEOUT_MS));
+
+		try {
+			const rawJson = await Promise.race([
+				this.browserWindow!.webContents.executeJavaScript(code),
+				timeout
+			]);
+
+			const entries = JSON.parse(rawJson) as Array<{ key: string; status: number; data: unknown; error?: string }>;
+			const results: Record<string, unknown> = {};
+
+			for (const entry of entries) {
+				if (entry.data != null && typeof entry.data === "object" && Object.keys(entry.data as Record<string, unknown>).length > 0) {
+					results[entry.key] = this.transformResponse(entry.key, entry.data);
+				} else if (Array.isArray(entry.data)) {
+					// Activities endpoint returns an array — could be empty [] for days without workouts
+					results[entry.key] = this.transformResponse(entry.key, entry.data);
+				}
+			}
+
+			return results;
+		} catch (e) {
+			console.debug("Garmin Health Sync: Supplemental fetch failed:", e);
+			return {};
+		}
+	}
+
 	/** Fallback: navigate BrowserWindow to the daily summary page + interceptor */
 	private async fetchViaNavigation(date: string): Promise<Record<string, unknown>> {
 		// Reset collected responses
@@ -490,6 +544,20 @@ export class GarminApi {
 
 		for (const [key, value] of Object.entries(responses)) {
 			console.debug(`Garmin Health Sync: Navigation [${key}]`, JSON.stringify(value).substring(0, 150));
+		}
+
+		// Supplement: fetch any required endpoints the page didn't trigger (e.g. activities)
+		const missing = (this.requiredEndpoints ?? Object.keys(this.endpoints))
+			.filter(k => !(k in responses) && k in this.endpoints);
+		if (missing.length > 0) {
+			console.debug("Garmin Health Sync: Navigation missed endpoints, supplementing:", missing.join(", "));
+			const supplemented = await this.fetchEndpointsDirect(date, missing);
+			for (const [key, value] of Object.entries(supplemented)) {
+				responses[key] = value;
+			}
+			if (Object.keys(supplemented).length > 0) {
+				console.debug("Garmin Health Sync: Supplemented keys:", Object.keys(supplemented).join(", "));
+			}
 		}
 
 		return responses;
