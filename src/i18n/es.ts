@@ -31,6 +31,10 @@ export const es: Record<TranslationKeys, string> = {
 	settingsDailyNoteTemplateDesc: "Contenido al crear una nueva nota diaria (dejar vacío para una nota en blanco)",
 	settingsMetricsStandard: "Métricas estándar",
 	settingsMetricsExtendedDesc: "Métricas adicionales (clic para expandir)",
+	settingsUnitSystem: "Sistema de unidades",
+	settingsUnitSystemDesc: "Elige cómo se muestran la distancia y el peso",
+	unitMetric: "Métrico (km, kg)",
+	unitImperial: "Imperial (mi, lbs)",
 	settingsLanguage: "Idioma",
 	settingsLanguageDesc: "Idioma de la interfaz del plugin",
 
@@ -57,6 +61,8 @@ export const es: Record<TranslationKeys, string> = {
 	metric_training_status: "Estado de entrenamiento",
 	metric_weight_kg: "Peso (kg)",
 	metric_body_fat_pct: "Grasa corporal %",
+	metric_distance_mi: "Distancia (mi)",
+	metric_weight_lbs: "Peso (lbs)",
 	metric_stress_high: "Duración del estrés (min)",
 	metric_recovery_high: "Duración de recuperación (min)",
 	// Notices

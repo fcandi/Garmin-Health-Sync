@@ -3,6 +3,7 @@ import type { HealthProvider } from "./providers/provider";
 import { writeToDailyNote } from "./daily-note";
 import type { HealthSyncSettings } from "./settings";
 import { t } from "./i18n/t";
+import { convertToImperial } from "./units";
 
 export class SyncManager {
 	private provider: HealthProvider;
@@ -48,8 +49,11 @@ export class SyncManager {
 				return false;
 			}
 
+			// Convert to imperial if configured
+			const outputData = settings.unitSystem === "imperial" ? convertToImperial(data) : data;
+
 			// Write to daily note
-			await writeToDailyNote(this.app, date, data, {
+			await writeToDailyNote(this.app, date, outputData, {
 				dailyNotePath: settings.dailyNotePath,
 				dailyNoteFormat: settings.dailyNoteFormat,
 				prefix: settings.usePrefix ? "ohs_" : "",
@@ -104,7 +108,8 @@ export class SyncManager {
 					const hasData = Object.keys(data.metrics).length > 0 || Object.keys(data.activities).length > 0;
 
 					if (hasData) {
-						await writeToDailyNote(this.app, date, data, {
+						const outputData = settings.unitSystem === "imperial" ? convertToImperial(data) : data;
+						await writeToDailyNote(this.app, date, outputData, {
 							dailyNotePath: settings.dailyNotePath,
 							dailyNoteFormat: settings.dailyNoteFormat,
 							prefix: settings.usePrefix ? "ohs_" : "",

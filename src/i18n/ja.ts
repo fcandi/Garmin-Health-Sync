@@ -31,6 +31,10 @@ export const ja: Record<TranslationKeys, string> = {
 	settingsDailyNoteTemplateDesc: "新しいデイリーノート作成時に使用するコンテンツ（空白ノートにする場合は空のままにしてください）",
 	settingsMetricsStandard: "標準メトリクス",
 	settingsMetricsExtendedDesc: "追加メトリクス（クリックで展開）",
+	settingsUnitSystem: "単位系",
+	settingsUnitSystemDesc: "距離と体重の表示単位を選択",
+	unitMetric: "メートル法（km、kg）",
+	unitImperial: "ヤード・ポンド法（mi、lbs）",
 	settingsLanguage: "言語",
 	settingsLanguageDesc: "プラグインの表示言語",
 
@@ -57,6 +61,8 @@ export const ja: Record<TranslationKeys, string> = {
 	metric_training_status: "トレーニングステータス",
 	metric_weight_kg: "体重（kg）",
 	metric_body_fat_pct: "体脂肪率",
+	metric_distance_mi: "距離（マイル）",
+	metric_weight_lbs: "体重（ポンド）",
 	metric_stress_high: "ストレス時間（分）",
 	metric_recovery_high: "回復時間（分）",
 	// Notices

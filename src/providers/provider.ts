@@ -3,6 +3,7 @@ export interface TrainingEntry {
 	type: string;
 	category: string;
 	distance_km?: number;
+	distance_mi?: number;
 	duration_min?: number;
 	avg_hr?: number;
 	calories?: number;

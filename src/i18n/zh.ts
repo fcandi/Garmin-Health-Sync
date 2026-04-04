@@ -31,6 +31,10 @@ export const zh: Record<TranslationKeys, string> = {
 	settingsDailyNoteTemplateDesc: "创建新每日笔记时使用的内容（留空则创建空白笔记）",
 	settingsMetricsStandard: "标准指标",
 	settingsMetricsExtendedDesc: "更多指标（点击展开）",
+	settingsUnitSystem: "单位制",
+	settingsUnitSystemDesc: "选择距离和体重的显示单位",
+	unitMetric: "公制（km、kg）",
+	unitImperial: "英制（mi、lbs）",
 	settingsLanguage: "语言",
 	settingsLanguageDesc: "插件界面语言",
 
@@ -57,6 +61,8 @@ export const zh: Record<TranslationKeys, string> = {
 	metric_training_status: "训练状态",
 	metric_weight_kg: "体重（公斤）",
 	metric_body_fat_pct: "体脂率",
+	metric_distance_mi: "距离（英里）",
+	metric_weight_lbs: "体重（磅）",
 	metric_stress_high: "压力时长（分钟）",
 	metric_recovery_high: "恢复时长（分钟）",
 	// Notices

@@ -29,6 +29,10 @@ export const en = {
 	settingsDailyNoteTemplateDesc: "Content added when creating a new daily note (leave empty for a blank note)",
 	settingsMetricsStandard: "Standard metrics",
 	settingsMetricsExtendedDesc: "Additional metrics (click to expand)",
+	settingsUnitSystem: "Unit system",
+	settingsUnitSystemDesc: "Choose how distance and weight are displayed",
+	unitMetric: "Metric (km, kg)",
+	unitImperial: "Imperial (mi, lbs)",
 	settingsLanguage: "Language",
 	settingsLanguageDesc: "Plugin UI language",
 
@@ -55,6 +59,8 @@ export const en = {
 	metric_training_status: "Training status",
 	metric_weight_kg: "Weight (kg)",
 	metric_body_fat_pct: "Body fat %",
+	metric_distance_mi: "Distance (mi)",
+	metric_weight_lbs: "Weight (lbs)",
 	metric_stress_high: "Stress duration (min)",
 	metric_recovery_high: "Recovery duration (min)",
 	// Notices

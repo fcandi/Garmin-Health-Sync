@@ -1,7 +1,7 @@
 {
 	"id": "garmin-health-sync",
 	"name": "Garmin Health Sync",
-	"version": "0.9.4",
+	"version": "0.9.5",
 	"minAppVersion": "0.15.0",
 	"description": "Sync Garmin Connect health data into your Daily Notes as frontmatter properties.",
 	"author": "fcandi",

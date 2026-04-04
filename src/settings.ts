@@ -4,7 +4,14 @@ import { METRICS, getDefaultEnabledMetrics } from "./metrics";
 import { t } from "./i18n/t";
 import type { TranslationKeys } from "./i18n/en";
 
+/** Maps internal metric keys to their imperial i18n label when unit system is imperial */
+const IMPERIAL_LABEL_MAP: Partial<Record<string, TranslationKeys>> = {
+	distance_km: "metric_distance_mi",
+	weight_kg: "metric_weight_lbs",
+};
+
 export type ServerRegion = "international" | "china";
+export type UnitSystem = "metric" | "imperial";
 
 export interface HealthSyncSettings {
 	usePrefix: boolean;
@@ -20,6 +27,7 @@ export interface HealthSyncSettings {
 	writeTrainings: boolean; // Machine-readable training data in frontmatter
 	writeWorkoutLocation: boolean; // Reverse-geocoded workout location in frontmatter
 	serverRegion: ServerRegion;
+	unitSystem: UnitSystem;
 }
 
 export const DEFAULT_SETTINGS: HealthSyncSettings = {
@@ -36,6 +44,7 @@ export const DEFAULT_SETTINGS: HealthSyncSettings = {
 	writeTrainings: false,
 	writeWorkoutLocation: true,
 	serverRegion: "international",
+	unitSystem: "metric",
 };
 
 export class HealthSyncSettingTab extends PluginSettingTab {
@@ -81,6 +90,20 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					this.plugin.settings.serverRegion = value as ServerRegion;
 					await this.plugin.saveSettings();
 					this.plugin.applyServerRegion();
+					this.display();
+				}));
+
+		// Unit System
+		new Setting(containerEl)
+			.setName(t("settingsUnitSystem", lang))
+			.setDesc(t("settingsUnitSystemDesc", lang))
+			.addDropdown(drop => drop
+				.addOption("metric", t("unitMetric", lang))
+				.addOption("imperial", t("unitImperial", lang))
+				.setValue(this.plugin.settings.unitSystem)
+				.onChange(async (value) => {
+					this.plugin.settings.unitSystem = value as UnitSystem;
+					await this.plugin.saveSettings();
 					this.display();
 				}));
 
@@ -193,9 +216,10 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 				}));
 
 		// Standard metrics
+		const isImperial = this.plugin.settings.unitSystem === "imperial";
 		new Setting(containerEl).setName(t("settingsMetricsStandard", lang)).setHeading();
 		for (const metric of METRICS.filter(m => m.category === "standard")) {
-			const labelKey = `metric_${metric.key}` as TranslationKeys;
+			const labelKey = (isImperial && IMPERIAL_LABEL_MAP[metric.key]) || `metric_${metric.key}` as TranslationKeys;
 			new Setting(containerEl)
 				.setName(t(labelKey, lang))
 				.addToggle(toggle => toggle
@@ -211,7 +235,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 		extDetails.createEl("summary", { text: t("settingsMetricsExtendedDesc", lang) });
 
 		for (const metric of METRICS.filter(m => m.category === "extended")) {
-			const labelKey = `metric_${metric.key}` as TranslationKeys;
+			const labelKey = (isImperial && IMPERIAL_LABEL_MAP[metric.key]) || `metric_${metric.key}` as TranslationKeys;
 			new Setting(extDetails)
 				.setName(t(labelKey, lang))
 				.addToggle(toggle => toggle
