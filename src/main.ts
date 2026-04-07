@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Plugin, Setting, TFile } from "obsidian";
+import { App, Modal, Notice, Plugin, Setting, TFile, moment } from "obsidian";
 import { DEFAULT_SETTINGS, HealthSyncSettings, HealthSyncSettingTab } from "./settings";
 import { SyncManager } from "./sync";
 import { GarminProvider } from "./providers/garmin/garmin-provider";
@@ -353,20 +353,9 @@ export default class HealthSyncPlugin extends Plugin {
 		if (path && dir !== path && !dir.startsWith(path + "/")) return null;
 		if (!path && dir !== "") return null;
 
-		const escaped = format
-			.replace("YYYY", "\x01")
-			.replace("MM", "\x02")
-			.replace("DD", "\x03")
-			.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-			.replace("\x01", "(?<year>\\d{4})")
-			.replace("\x02", "(?<month>\\d{2})")
-			.replace("\x03", "(?<day>\\d{2})");
-		const match = file.basename.match(new RegExp(`^${escaped}$`));
-		if (!match?.groups) return null;
-
-		const { year, month, day } = match.groups;
-		if (!year || !month || !day) return null;
-		return `${year}-${month}-${day}`;
+		const m = moment(file.basename, format, true);
+		if (!m.isValid()) return null;
+		return m.format("YYYY-MM-DD");
 	}
 
 	private matchesDailyNote(file: TFile, date: string): boolean {

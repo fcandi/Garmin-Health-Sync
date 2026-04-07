@@ -1,4 +1,4 @@
-import { App, TFile, TFolder, normalizePath } from "obsidian";
+import { App, TFile, TFolder, normalizePath, moment } from "obsidian";
 import type { HealthData } from "./providers/provider";
 import { applyPrefix } from "./metrics";
 import { reverseGeocode } from "./geocoding";
@@ -193,15 +193,11 @@ async function deduplicateFrontmatter(app: App, file: TFile): Promise<void> {
 }
 
 /**
- * Simple date formatting for daily note file names.
- * Supports YYYY, MM, DD placeholders.
+ * Formats a date string (YYYY-MM-DD) using a moment.js format string.
+ * Supports all tokens Obsidian itself supports (ddd, dddd, HH, etc.).
  */
 function formatDate(dateStr: string, format: string): string {
-	const [year, month, day] = dateStr.split("-");
-	if (!year || !month || !day) return dateStr;
-
-	return format
-		.replace(/YYYY/g, year)
-		.replace(/MM/g, month)
-		.replace(/DD/g, day);
+	const m = moment(dateStr, "YYYY-MM-DD");
+	if (!m.isValid()) return dateStr;
+	return m.format(format);
 }
