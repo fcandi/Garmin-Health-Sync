@@ -107,8 +107,10 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					this.display();
 				}));
 
-		// Garmin Login
-		const isLoggedIn = this.plugin.isSessionValid();
+		// Garmin Login — treat paused auto-sync as "not logged in" because the
+		// pause flag is only set after a real auth failure against the API, while
+		// isSessionValid() is just a 30-day local timestamp heuristic.
+		const isLoggedIn = this.plugin.isSessionValid() && !this.plugin.settings.autoSyncPaused;
 		const loginSetting = new Setting(containerEl)
 			.setName(t("settingsGarminLogin", lang))
 			.setDesc(isLoggedIn ? t("settingsGarminLoggedIn", lang) : t("settingsGarminLoggedOut", lang));

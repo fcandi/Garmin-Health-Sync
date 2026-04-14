@@ -45,6 +45,20 @@ export class GarminProvider implements HealthProvider {
 		return this.api.ensureBrowser();
 	}
 
+	/** Silent reauth for auto-sync: never shows the login window. */
+	async silentAuthenticate(): Promise<boolean> {
+		return this.api.silentLogin();
+	}
+
+	/** Cheap probe to verify Garmin still accepts the current session cookies. */
+	async probeSession(): Promise<boolean> {
+		return this.api.probeSession();
+	}
+
+	isBrowserReady(): boolean {
+		return this.api.isBrowserReady();
+	}
+
 	closeBrowser(): void {
 		this.api.closeBrowser();
 	}

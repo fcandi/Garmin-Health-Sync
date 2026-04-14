@@ -90,10 +90,46 @@ export default class HealthSyncPlugin extends Plugin {
 
 		this.autoSyncRunning = true;
 		try {
+			// Verify the session is actually alive on Garmin's side before starting
+			// the batch. Prevents mid-batch 401s when server-side cookies have
+			// expired even though our local 30-day heuristic still says "valid".
+			const sessionOk = await this.ensureAliveSession();
+			if (!sessionOk) {
+				this.settings.autoSyncPaused = true;
+				await this.saveSettings();
+				new Notice(t("noticeSessionExpired", this.settings.language));
+				return;
+			}
 			await this.runAutoSync();
 		} finally {
 			this.autoSyncRunning = false;
 		}
+	}
+
+	/** Guarantees a usable Garmin session before a batch starts.
+	 *  - If no BrowserWindow is open yet → silent login.
+	 *  - If one is open → cheap probe; on failure → silent re-login.
+	 *  Returns false only if the session is genuinely dead and the user must
+	 *  log in manually again. */
+	private async ensureAliveSession(): Promise<boolean> {
+		if (!this.garminProvider.isBrowserReady()) {
+			const ok = await this.garminProvider.silentAuthenticate();
+			if (!ok) return false;
+			this.saveSession();
+			await this.saveSettings();
+			return true;
+		}
+
+		const alive = await this.garminProvider.probeSession();
+		if (alive) return true;
+
+		console.debug("Garmin Health Sync: Session probe failed — attempting silent re-login");
+		const reauthed = await this.garminProvider.silentAuthenticate();
+		if (reauthed) {
+			this.saveSession();
+			await this.saveSettings();
+		}
+		return reauthed;
 	}
 
 	private async runAutoSync(): Promise<void> {

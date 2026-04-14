@@ -138,8 +138,11 @@ export class GarminApi {
 		this.browserWindow = null;
 	}
 
-	/** Login via Electron BrowserWindow */
-	async loginViaBrowser(): Promise<boolean> {
+	/** Login via Electron BrowserWindow.
+	 *  @param opts.silent  If true, never shows the window and uses a shorter
+	 *                      timeout. Used by auto-sync for invisible cookie refresh. */
+	async loginViaBrowser(opts: { silent?: boolean } = {}): Promise<boolean> {
+		const silent = opts.silent ?? false;
 		// eslint-disable-next-line @typescript-eslint/no-require-imports -- Electron must be loaded via require() at runtime in Obsidian plugins
 		const electron = require("electron") as { remote?: { BrowserWindow: new (opts: object) => BrowserWindowType }; BrowserWindow: new (opts: object) => BrowserWindowType };
 		const { BrowserWindow } = electron.remote ?? electron;
@@ -148,12 +151,12 @@ export class GarminApi {
 		const signinUrl = this.buildUrl(this.urls.ssoSignin, signinParams);
 
 		return new Promise<boolean>((resolve) => {
-			// Start hidden if session is known (auto-login expected)
+			// Start hidden in silent mode OR if session is known (auto-login expected)
 			const hasSession = this.session !== null;
 		const authWindow: BrowserWindowType = new BrowserWindow({
 				width: 500,
 				height: 700,
-				show: !hasSession,
+				show: !silent && !hasSession,
 				title: "Garmin Connect Login",
 				webPreferences: {
 					nodeIntegration: false,
@@ -167,13 +170,16 @@ export class GarminApi {
 			// Global timeouts — always active, regardless of the loaded page.
 			// Fix: when session cookies expire, Garmin loads the SSO page instead of
 			// the app. isConnectPage would be false → timeouts never set → promise hangs forever.
-			const showTimer = setTimeout(() => {
+			// In silent mode we never reveal the window and use a much shorter timeout
+			// so a dead session doesn't hold up the auto-sync for minutes.
+			const showTimer: ReturnType<typeof setTimeout> | null = silent ? null : setTimeout(() => {
 				if (!resolved && !authWindow.isDestroyed()) {
 					console.debug("Garmin Health Sync: Auto-login taking long, showing window...");
 					authWindow.show();
 				}
 			}, 10000);
 
+			const globalTimeoutMs = silent ? 30000 : 120000;
 			const globalTimeout = setTimeout(() => {
 				if (!resolved) {
 					if (pollInterval) clearInterval(pollInterval);
@@ -182,7 +188,7 @@ export class GarminApi {
 					if (!authWindow.isDestroyed()) authWindow.close();
 					resolve(false);
 				}
-			}, 120000);
+			}, globalTimeoutMs);
 
 			// On every page: inject padding + interceptor
 			authWindow.webContents.on("dom-ready", () => {
@@ -208,7 +214,7 @@ export class GarminApi {
 							if (name) {
 								clearInterval(pollInterval!);
 								resolved = true;
-								clearTimeout(showTimer);
+								if (showTimer) clearTimeout(showTimer);
 								clearTimeout(globalTimeout);
 								this.session = { displayName: name, timestamp: Date.now() };
 								this.browserWindow = authWindow;
@@ -227,7 +233,7 @@ export class GarminApi {
 			});
 
 			authWindow.on("closed", () => {
-				clearTimeout(showTimer);
+				if (showTimer) clearTimeout(showTimer);
 				clearTimeout(globalTimeout);
 				if (pollInterval) clearInterval(pollInterval);
 				if (this.browserWindow === authWindow) this.browserWindow = null;
@@ -344,6 +350,54 @@ export class GarminApi {
 	async ensureBrowser(): Promise<boolean> {
 		if (this.isBrowserReady()) return true;
 		return this.loginViaBrowser();
+	}
+
+	/** Lightweight probe: verifies that Garmin still accepts the current session
+	 *  cookies by hitting a cheap profile endpoint. Used by auto-sync to detect
+	 *  server-side session expiry before a batch starts. Returns false on any
+	 *  failure (no browser, no captured headers, non-200 status, network error). */
+	async probeSession(): Promise<boolean> {
+		if (!this.session?.displayName) return false;
+		if (!this.isBrowserReady()) return false;
+
+		const dn = this.session.displayName;
+		const url = `${this.urls.apiBase}/userprofile-service/socialProfile/${dn}`;
+		const PROBE_TIMEOUT_MS = 8000;
+
+		try {
+			const headersJson = await this.browserWindow!.webContents.executeJavaScript(
+				`JSON.stringify(window.__hs_apiHeaders || null)`
+			);
+			if (!headersJson || headersJson === "null") {
+				console.debug("Garmin Health Sync: Session probe — no API headers captured yet");
+				return false;
+			}
+
+			const code = `fetch(${JSON.stringify(url)}, { headers: Object.assign({}, window.__hs_apiHeaders, { "NK": "NT", "Accept": "application/json" }) })
+				.then(r => r.status)
+				.catch(() => -1)`;
+
+			const timeout = new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error(`probe timeout ${PROBE_TIMEOUT_MS}ms`)), PROBE_TIMEOUT_MS));
+
+			const status = await Promise.race([
+				this.browserWindow!.webContents.executeJavaScript(code),
+				timeout
+			]);
+
+			const ok = Number(status) === 200;
+			console.debug(`Garmin Health Sync: Session probe → status ${status} (${ok ? "alive" : "dead"})`);
+			return ok;
+		} catch (e) {
+			console.debug("Garmin Health Sync: Session probe failed:", e);
+			return false;
+		}
+	}
+
+	/** Silent login — identical to loginViaBrowser but never shows the window
+	 *  and gives up after 30s. Used by auto-sync for invisible cookie refresh. */
+	async silentLogin(): Promise<boolean> {
+		return this.loginViaBrowser({ silent: true });
 	}
 
 	// --- Data fetching ---
