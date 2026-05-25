@@ -25,4 +25,4 @@ jobs:
             - name: Create release and upload assets
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: gh release create "${{ github.ref_name }}" main.js manifest.json --generate-notes
+              run: gh release create "${{ github.ref_name }}" main.js manifest.json styles.css --generate-notes

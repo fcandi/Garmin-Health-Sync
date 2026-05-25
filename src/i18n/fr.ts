@@ -2,7 +2,7 @@ import type { TranslationKeys } from "./en";
 
 export const fr: Record<TranslationKeys, string> = {
 	// Commands
-	commandSync: "Récupérer les données de santé",
+	commandSync: "Synchroniser la note active",
 	commandBackfill: "Remplir les données de santé",
 
 	// Settings
@@ -57,6 +57,7 @@ export const fr: Record<TranslationKeys, string> = {
 	metric_sleep_light: "Sommeil léger",
 	metric_sleep_rem: "Sommeil paradoxal",
 	metric_sleep_awake: "Temps d'éveil",
+	metric_vo2_max: "Vo2 max",
 	metric_training_readiness: "Préparation à l'entraînement",
 	metric_training_status: "Statut d'entraînement",
 	metric_weight_kg: "Poids (kg)",

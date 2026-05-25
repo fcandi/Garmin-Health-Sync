@@ -25,6 +25,20 @@ function get(obj: Record<string, unknown>, path: string): unknown {
 	return current;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+	if (value != null && typeof value === "object" && !Array.isArray(value)) {
+		return value as Record<string, unknown>;
+	}
+	return {};
+}
+
+function firstRecord(value: unknown): Record<string, unknown> {
+	if (Array.isArray(value)) {
+		return asRecord(value[0]);
+	}
+	return asRecord(value);
+}
+
 /** Maps Garmin daily summary to normalized metrics */
 export function mapDailySummary(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
@@ -178,13 +192,35 @@ export function mapTrainingReadiness(data: Record<string, unknown>, enabled: Set
 }
 
 /** Maps Training Status */
-export function mapTrainingStatus(data: Record<string, unknown>, enabled: Set<string>): Record<string, number | string> {
+export function mapTrainingStatus(data: Record<string, unknown> | Record<string, unknown>[], enabled: Set<string>): Record<string, number | string> {
 	const result: Record<string, number | string> = {};
-	if (!enabled.has("training_status")) return result;
+	if (!enabled.has("training_status") && !enabled.has("vo2_max")) return result;
 
-	const status = data["currentTrainingStatusPhrase"] ?? data["trainingStatusPhrase"];
-	if (typeof status === "string") result["training_status"] = status;
-	else if (typeof status === "number") result["training_status"] = String(status);
+	const entry = firstRecord(data);
+	const generic = asRecord(entry["generic"]);
+
+	if (enabled.has("training_status")) {
+		const status = entry["currentTrainingStatusPhrase"]
+			?? entry["trainingStatusPhrase"]
+			?? generic["currentTrainingStatusPhrase"]
+			?? generic["trainingStatusPhrase"];
+		if (typeof status === "string") result["training_status"] = status;
+		else if (typeof status === "number") result["training_status"] = String(status);
+	}
+
+	if (enabled.has("vo2_max")) {
+		const vo2Max = generic["vo2MaxValue"]
+			?? entry["vo2MaxValue"]
+			?? generic["vo2MaxPreciseValue"]
+			?? entry["vo2MaxPreciseValue"]
+			?? generic["maxMet"]
+			?? entry["maxMet"]
+			?? generic["maxMetValue"]
+			?? entry["maxMetValue"];
+		if (vo2Max != null && Number.isFinite(Number(vo2Max))) {
+			result["vo2_max"] = round1(Number(vo2Max));
+		}
+	}
 
 	return result;
 }

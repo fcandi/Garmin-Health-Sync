@@ -166,8 +166,8 @@ export class GarminProvider implements HealthProvider {
 			);
 		}
 
-		// Training Status
-		if (enabled.has("training_status")) {
+		// Training Status / VO2 max
+		if (enabled.has("training_status") || enabled.has("vo2_max")) {
 			requests.push(
 				this.api.fetchTrainingStatus(date)
 					.then(data => merge("trainingStatus", mapTrainingStatus(data, enabled)))

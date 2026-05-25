@@ -48,7 +48,7 @@ const ENDPOINT_METRIC_MAP: Record<string, string[]> = {
 	weight: ["weight_kg", "body_fat_pct"],
 	spo2: ["spo2"],
 	respiration: ["respiration_rate"],
-	trainingStatus: ["training_status"],
+	trainingStatus: ["training_status", "vo2_max"],
 	trainingReadiness: ["training_readiness"],
 };
 
@@ -211,7 +211,7 @@ export class GarminApi {
 							const name = await authWindow.webContents.executeJavaScript(
 								`window.__hs_displayName || ""`
 							);
-							if (name) {
+							if (this.isPlausibleDisplayName(name)) {
 								clearInterval(pollInterval!);
 								resolved = true;
 								if (showTimer) clearTimeout(showTimer);
@@ -244,6 +244,16 @@ export class GarminApi {
 		});
 	}
 
+	private isPlausibleDisplayName(value: unknown): value is string {
+		if (typeof value !== "string") return false;
+		const name = value.trim();
+		if (!name || name === "undefined") return false;
+		if (/^v\d+$/i.test(name)) return false;
+		const reserved = new Set(["api", "app", "daily", "gc-api", "modern", "personal-information", "socialProfile", "usersummary"]);
+		if (reserved.has(name)) return false;
+		return /^[A-Za-z0-9._-]{2,80}$/.test(name);
+	}
+
 	/** Inject interceptor into the page — captures displayName and API responses */
 	private injectInterceptor(win: BrowserWindowType): void {
 		win.webContents.executeJavaScript(`
@@ -253,6 +263,51 @@ export class GarminApi {
 				window.__hs_displayName = "";
 				window.__hs_responses = {};
 				window.__hs_apiHeaders = null;
+
+				function isPlausibleDisplayName(value) {
+					if (typeof value !== "string") return false;
+					var name = value.trim();
+					if (!name || name === "undefined") return false;
+					if (/^v\\d+$/i.test(name)) return false;
+					var reserved = {
+						"api": true,
+						"app": true,
+						"daily": true,
+						"gc-api": true,
+						"modern": true,
+						"personal-information": true,
+						"socialProfile": true,
+						"usersummary": true
+					};
+					if (reserved[name]) return false;
+					return /^[A-Za-z0-9._-]{2,80}$/.test(name);
+				}
+
+				function setDisplayName(candidate) {
+					if (!isPlausibleDisplayName(candidate)) return;
+					if (!window.__hs_displayName || !isPlausibleDisplayName(window.__hs_displayName)) {
+						window.__hs_displayName = candidate.trim();
+					}
+				}
+
+				function extractDisplayNameFromData(data) {
+					if (!data || typeof data !== "object") return "";
+					var candidates = [
+						data.displayName,
+						data.userName,
+						data.username,
+						data.profile && data.profile.displayName,
+						data.profile && data.profile.userName,
+						data.socialProfile && data.socialProfile.displayName,
+						data.socialProfile && data.socialProfile.userName,
+						data.userProfile && data.userProfile.displayName,
+						data.userProfile && data.userProfile.userName
+					];
+					for (var i = 0; i < candidates.length; i++) {
+						if (isPlausibleDisplayName(candidates[i])) return candidates[i];
+					}
+					return "";
+				}
 
 				// Intercept fetch
 				const origFetch = window.fetch;
@@ -281,17 +336,15 @@ export class GarminApi {
 					const result = origFetch.apply(this, arguments);
 
 					// Extract displayName from URLs
-					const nameMatch = url.match(/\\/device-info\\/all\\/([^?/]+)/)
-						|| url.match(/\\/usersummary\\/daily\\/([^?/]+)/)
+					const nameMatch = url.match(/\\/usersummary\\/daily\\/([^/?]+)/)
 						|| url.match(/\\/socialProfile\\/([^?/]+)/)
 						|| url.match(/\\/personal-information\\/([^?/]+)/);
-					if (nameMatch && nameMatch[1] && nameMatch[1] !== "undefined") {
-						window.__hs_displayName = nameMatch[1];
-					}
+					if (nameMatch && nameMatch[1]) setDisplayName(decodeURIComponent(nameMatch[1]));
 
 					// Capture API responses
 					if (url.includes("/gc-api/") || url.includes("/proxy/")) {
 						result.then(r => r.clone().json()).then(data => {
+							setDisplayName(extractDisplayNameFromData(data));
 							if (url.includes("usersummary/daily/") && url.includes("calendarDate"))
 								window.__hs_responses.dailySummary = data;
 							if (url.includes("dailySleepData"))
@@ -327,10 +380,10 @@ export class GarminApi {
 				};
 				XMLHttpRequest.prototype.send = function() {
 					const url = this.__hs_url || "";
-					const nameMatch = url.match(/\\/device-info\\/all\\/([^?/]+)/);
-					if (nameMatch && nameMatch[1] && nameMatch[1] !== "undefined") {
-						window.__hs_displayName = nameMatch[1];
-					}
+					const nameMatch = url.match(/\\/usersummary\\/daily\\/([^/?]+)/)
+						|| url.match(/\\/socialProfile\\/([^?/]+)/)
+						|| url.match(/\\/personal-information\\/([^?/]+)/);
+					if (nameMatch && nameMatch[1]) setDisplayName(decodeURIComponent(nameMatch[1]));
 					this.addEventListener("load", function() {
 						try {
 							if (url.includes("graphql") && this.responseText) {
@@ -418,17 +471,43 @@ export class GarminApi {
 		// Fast path: parallel fetch() in BrowserWindow context (~1-2s)
 		try {
 			const data = await this.fetchDirectInBrowser(date);
-			if (Object.keys(data).length > 0) {
+			const missing = this.getMissingRequiredEndpoints(data);
+			if (Object.keys(data).length > 0 && missing.length === 0) {
 				console.debug("Garmin Health Sync: Direct fetch OK ✓ keys:", Object.keys(data).join(", "));
 				return data;
 			}
-			console.debug("Garmin Health Sync: Direct fetch returned no data, falling back to navigation");
+			console.debug("Garmin Health Sync: Direct fetch incomplete, falling back to navigation. Missing:", missing.join(", ") || "all");
+			const navigationData = await this.fetchViaNavigation(date);
+			await this.refreshDisplayNameFromBrowser();
+			return { ...data, ...navigationData };
 		} catch (e) {
 			console.debug("Garmin Health Sync: Direct fetch failed, falling back to navigation:", e);
 		}
 
 		// Slow path: page navigation + interceptor (~10-15s)
-		return this.fetchViaNavigation(date);
+		const navigationData = await this.fetchViaNavigation(date);
+		await this.refreshDisplayNameFromBrowser();
+		return navigationData;
+	}
+
+	private getMissingRequiredEndpoints(data: Record<string, unknown>): string[] {
+		const endpointKeys = this.requiredEndpoints ?? Object.keys(this.endpoints);
+		return endpointKeys.filter(key => !(key in data));
+	}
+
+	private async refreshDisplayNameFromBrowser(): Promise<void> {
+		if (!this.isBrowserReady()) return;
+		try {
+			const name = await this.browserWindow!.webContents.executeJavaScript(
+				`window.__hs_displayName || ""`
+			);
+			if (this.isPlausibleDisplayName(name) && this.session?.displayName !== name) {
+				console.debug("Garmin Health Sync: Refreshed displayName from browser session");
+				this.session = { displayName: name, timestamp: Date.now() };
+			}
+		} catch {
+			// Ignore transient navigation errors.
+		}
 	}
 
 	/** Call all required endpoints in parallel via fetch() in the BrowserWindow context */
@@ -474,7 +553,7 @@ export class GarminApi {
 		const failed: string[] = [];
 
 		for (const entry of entries) {
-			if (entry.data != null && typeof entry.data === "object" && Object.keys(entry.data as Record<string, unknown>).length > 0) {
+			if (entry.status === 200 && entry.data != null) {
 				results[entry.key] = this.transformResponse(entry.key, entry.data);
 			} else if (entry.status !== 200) {
 				failed.push(`${entry.key}:${entry.status}`);

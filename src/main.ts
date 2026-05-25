@@ -264,8 +264,7 @@ export default class HealthSyncPlugin extends Plugin {
 		const noteDate = this.dateFromDailyNote(activeFile);
 		if (!noteDate) return yesterday;
 
-		// Today → use yesterday; anything else → use that exact day
-		return noteDate === this.todayString() ? yesterday : noteDate;
+		return noteDate;
 	}
 
 	/** BrowserWindow login from settings */

@@ -27,6 +27,7 @@ export const METRICS: MetricDefinition[] = [
 	{ key: "sleep_light", type: "string", category: "extended", defaultEnabled: false },
 	{ key: "sleep_rem", type: "string", category: "extended", defaultEnabled: false },
 	{ key: "sleep_awake", type: "string", category: "extended", defaultEnabled: false },
+	{ key: "vo2_max", type: "number", category: "extended", defaultEnabled: false },
 	{ key: "training_readiness", type: "number", category: "extended", defaultEnabled: false },
 	{ key: "training_status", type: "string", category: "extended", defaultEnabled: false },
 	{ key: "weight_kg", type: "number", category: "extended", defaultEnabled: false },

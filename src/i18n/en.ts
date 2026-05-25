@@ -1,6 +1,6 @@
 export const en = {
 	// Commands
-	commandSync: "Fetch health data",
+	commandSync: "Sync current note",
 	commandBackfill: "Backfill health data",
 
 	// Settings
@@ -55,6 +55,7 @@ export const en = {
 	metric_sleep_light: "Light sleep",
 	metric_sleep_rem: "REM sleep",
 	metric_sleep_awake: "Awake time",
+	metric_vo2_max: "Vo2 max",
 	metric_training_readiness: "Training readiness",
 	metric_training_status: "Training status",
 	metric_weight_kg: "Weight (kg)",

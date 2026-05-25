@@ -34,6 +34,7 @@ sleep_score: 81
 sleep_duration: 7h 43min
 hrv: 39
 stress: 30
+vo2_max: 48
 workout_location: Bad Honnef, Germany
 ---
 ```

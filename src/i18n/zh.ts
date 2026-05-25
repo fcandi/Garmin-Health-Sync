@@ -2,7 +2,7 @@ import type { TranslationKeys } from "./en";
 
 export const zh: Record<TranslationKeys, string> = {
 	// Commands
-	commandSync: "获取健康数据",
+	commandSync: "同步当前笔记",
 	commandBackfill: "回填健康数据",
 
 	// Settings
@@ -57,6 +57,7 @@ export const zh: Record<TranslationKeys, string> = {
 	metric_sleep_light: "浅度睡眠",
 	metric_sleep_rem: "快速眼动睡眠",
 	metric_sleep_awake: "清醒时间",
+	metric_vo2_max: "Vo2 max",
 	metric_training_readiness: "训练准备度",
 	metric_training_status: "训练状态",
 	metric_weight_kg: "体重（公斤）",

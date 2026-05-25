@@ -2,7 +2,7 @@ import type { TranslationKeys } from "./en";
 
 export const ja: Record<TranslationKeys, string> = {
 	// Commands
-	commandSync: "ヘルスデータを取得",
+	commandSync: "現在のノートを同期",
 	commandBackfill: "ヘルスデータをバックフィル",
 
 	// Settings
@@ -57,6 +57,7 @@ export const ja: Record<TranslationKeys, string> = {
 	metric_sleep_light: "浅い睡眠",
 	metric_sleep_rem: "レム睡眠",
 	metric_sleep_awake: "覚醒時間",
+	metric_vo2_max: "Vo2 max",
 	metric_training_readiness: "トレーニング準備度",
 	metric_training_status: "トレーニングステータス",
 	metric_weight_kg: "体重（kg）",

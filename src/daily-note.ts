@@ -1,4 +1,4 @@
-import { App, TFile, TFolder, moment, normalizePath } from "obsidian";
+import { App, Notice, TFile, TFolder, moment, normalizePath, parseYaml, stringifyYaml } from "obsidian";
 import type { HealthData } from "./providers/provider";
 import { applyPrefix } from "./metrics";
 import { reverseGeocode } from "./geocoding";
@@ -50,6 +50,9 @@ async function ensureFolderExists(app: App, folderPath: string): Promise<void> {
 /**
  * Writes health data as frontmatter properties into a daily note.
  * Creates the daily note if it does not exist.
+ * Returns true if the file was actually modified, false if all target values
+ * already matched the existing frontmatter (dirty check — avoids redundant
+ * writes that would trigger sync engines like LiveSync).
  */
 export async function writeToDailyNote(
 	app: App,
@@ -63,7 +66,7 @@ export async function writeToDailyNote(
 		writeTrainings: boolean;
 		writeWorkoutLocation: boolean;
 	}
-): Promise<void> {
+): Promise<boolean> {
 	const fileName = formatDate(date, options.dailyNoteFormat);
 
 	// Search for existing daily note recursively
@@ -104,92 +107,206 @@ export async function writeToDailyNote(
 		}
 	}
 
-	// Write to frontmatter
-	await updateFrontmatter(app, file, properties);
+	// Write to frontmatter (returns false if nothing would change)
+	return updateFrontmatter(app, file, properties);
 }
 
 /**
  * Updates or adds frontmatter properties in a file.
- * Existing properties are overwritten, others are preserved.
+ *
+ * Reads the file directly, parses the frontmatter block strictly via parseYaml,
+ * merges new values, re-serializes via stringifyYaml, writes via vault.modify.
+ *
+ * This replaces app.fileManager.processFrontMatter, which has shown two
+ * data-corrupting failure modes against real notes:
+ *   1. Files with `---` somewhere in the body (Markdown horizontal rules)
+ *      were misinterpreted as having frontmatter spanning into the body.
+ *   2. YAML maps that ended with a block sequence (e.g. `book_titles:\n- '[[..]]'`)
+ *      received new keys *before* the sequence, breaking the file.
+ *
+ * Returns true if the file was modified, false if all incoming values already
+ * matched what was already in the frontmatter (dirty-check).
  */
 async function updateFrontmatter(
 	app: App,
 	file: TFile,
 	properties: Record<string, number | string | Record<string, unknown>[]>
-): Promise<void> {
-	const applyProperties = (frontmatter: Record<string, unknown>): void => {
-		for (const [key, value] of Object.entries(properties)) {
-			frontmatter[key] = value;
-		}
-	};
+): Promise<boolean> {
+	const content = await app.vault.read(file);
+	const parsed = extractFrontmatter(content);
 
-	// A: Proactively clean up duplicate frontmatter keys
-	await deduplicateFrontmatter(app, file);
+	if (parsed.kind === "invalid") {
+		// Don't overwrite a damaged file — back it up and bail with a notice.
+		await backupFile(app, file, content, parsed.reason);
+		const msg = `Garmin Health Sync: Frontmatter in "${file.path}" ist kaputt (${parsed.reason}). Ein Backup wurde unter _garmin-health-sync/backups/ abgelegt. Bitte manuell reparieren.`;
+		console.warn(msg);
+		new Notice(msg, 15000);
+		return false;
+	}
 
-	try {
-		await app.fileManager.processFrontMatter(file, applyProperties);
-	} catch (e) {
-		// B: If YAML still fails, clean more aggressively and retry
-		if (e instanceof Error && e.message.includes("Map keys must be unique")) {
-			console.warn("Garmin Health Sync: Fixing corrupt frontmatter in", file.path);
-			await deduplicateFrontmatter(app, file);
-			await app.fileManager.processFrontMatter(file, applyProperties);
-		} else {
-			throw e;
+	const existing = parsed.kind === "present" ? parsed.data : {};
+
+	// Dirty-check: skip the write when every incoming key is already present
+	// with the same value. Avoids flipping the file's mtime and firing LiveSync
+	// when nothing changed.
+	let changed = false;
+	for (const [key, value] of Object.entries(properties)) {
+		if (!isDeepEqual(existing[key], value)) {
+			changed = true;
+			break;
 		}
 	}
+	if (!changed) {
+		console.debug("Garmin Health Sync: frontmatter unchanged, skipping write for", file.path);
+		return false;
+	}
+
+	const merged = { ...existing };
+	for (const [key, value] of Object.entries(properties)) {
+		merged[key] = value;
+	}
+
+	const newContent = renderWithFrontmatter(merged, parsed);
+	await app.vault.modify(file, newContent);
+	return true;
+}
+
+type FrontmatterParse =
+	| { kind: "absent"; body: string; lineEnding: string }
+	| {
+			kind: "present";
+			data: Record<string, unknown>;
+			body: string;
+			lineEnding: string;
+			rawHeader: string;
+	  }
+	| { kind: "invalid"; reason: string };
+
+/**
+ * Extracts the frontmatter block strictly: the file must start with `---`
+ * on its own line. The block ends at the next `---` line. Anything between
+ * is parsed via parseYaml and must yield a plain object.
+ */
+function extractFrontmatter(content: string): FrontmatterParse {
+	const lineEnding = content.includes("\r\n") ? "\r\n" : "\n";
+
+	// File doesn't open with `---\n` → no frontmatter.
+	if (!/^---\r?\n/.test(content)) {
+		return { kind: "absent", body: content, lineEnding };
+	}
+
+	const lines = content.split(/\r?\n/);
+	// Find the closing `---` (start at line 1, line 0 is the opener).
+	let closingIdx = -1;
+	for (let i = 1; i < lines.length; i++) {
+		if (lines[i] === "---") {
+			closingIdx = i;
+			break;
+		}
+	}
+	if (closingIdx === -1) {
+		return { kind: "invalid", reason: "kein schließender --- Marker gefunden" };
+	}
+
+	const yamlText = lines.slice(1, closingIdx).join(lineEnding);
+	let data: unknown;
+	try {
+		data = parseYaml(yamlText);
+	} catch (e) {
+		const msg = e instanceof Error ? e.message : String(e);
+		return { kind: "invalid", reason: `YAML-Parse-Fehler: ${msg}` };
+	}
+
+	// Empty frontmatter (`---\n---`) → parseYaml returns null. Treat as empty object.
+	if (data === null || data === undefined) {
+		const body = lines.slice(closingIdx + 1).join(lineEnding);
+		return {
+			kind: "present",
+			data: {},
+			body,
+			lineEnding,
+			rawHeader: "",
+		};
+	}
+
+	if (typeof data !== "object" || Array.isArray(data)) {
+		return { kind: "invalid", reason: "Frontmatter ist kein YAML-Object (z.B. Liste oder Skalar)" };
+	}
+
+	const body = lines.slice(closingIdx + 1).join(lineEnding);
+	return {
+		kind: "present",
+		data: data as Record<string, unknown>,
+		body,
+		lineEnding,
+		rawHeader: yamlText,
+	};
+}
+
+/** Re-assembles the file content with the merged frontmatter. */
+function renderWithFrontmatter(
+	merged: Record<string, unknown>,
+	parsed: Exclude<FrontmatterParse, { kind: "invalid" }>
+): string {
+	const lineEnding = parsed.lineEnding;
+	let yaml = stringifyYaml(merged);
+	// stringifyYaml ends with a newline already; trim trailing newlines so we control the joining exactly.
+	yaml = yaml.replace(/\r?\n+$/, "");
+	const yamlBlock = `---${lineEnding}${yaml.replace(/\n/g, lineEnding)}${lineEnding}---`;
+
+	if (parsed.kind === "absent") {
+		// Insert frontmatter at the top. Empty file → just the FM.
+		if (parsed.body.length === 0) return `${yamlBlock}${lineEnding}`;
+		return `${yamlBlock}${lineEnding}${parsed.body}`;
+	}
+
+	// Present: yaml block + original body (body was sliced AFTER the closing ---,
+	// so it already starts at the right line; rejoin with one line ending).
+	return `${yamlBlock}${lineEnding}${parsed.body}`;
 }
 
 /**
- * Removes duplicate top-level keys from a file's frontmatter.
- * Keeps the last occurrence of each key (most recent data).
+ * Writes a timestamped backup of the file content into _garmin-health-sync/backups/.
+ * Best-effort — failures are logged but not propagated.
  */
-async function deduplicateFrontmatter(app: App, file: TFile): Promise<void> {
-	const content = await app.vault.read(file);
-	const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-	if (!fmMatch) return;
+async function backupFile(app: App, file: TFile, content: string, reason: string): Promise<void> {
+	try {
+		const backupDir = "_garmin-health-sync/backups";
+		await ensureFolderExists(app, backupDir);
+		const ts = moment().format("YYYY-MM-DDTHH-mm-ss");
+		const safeName = file.name.replace(/\.md$/, "");
+		const backupPath = normalizePath(`${backupDir}/${safeName}.${ts}.md`);
+		const header = `<!-- Garmin Health Sync Backup\nReason: ${reason}\nOriginal: ${file.path}\nTimestamp: ${ts}\n-->\n`;
+		await app.vault.create(backupPath, header + content);
+		console.warn("Garmin Health Sync: backup written to", backupPath);
+	} catch (e) {
+		console.error("Garmin Health Sync: backup failed for", file.path, e);
+	}
+}
 
-	const fmContent = fmMatch[1]!;
-	const lines = fmContent.split("\n");
-
-	// Identify top-level keys and their line ranges
-	const entries: { key: string; start: number; end: number }[] = [];
-	for (let i = 0; i < lines.length; i++) {
-		const keyMatch = lines[i]!.match(/^([a-zA-Z_][\w-]*)\s*:/);
-		if (keyMatch) {
-			if (entries.length > 0) entries[entries.length - 1]!.end = i - 1;
-			entries.push({ key: keyMatch[1]!, start: i, end: i });
-		} else if (entries.length > 0) {
-			// Continuation line (e.g. YAML array) — belongs to the last key
-			entries[entries.length - 1]!.end = i;
+function isDeepEqual(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (a == null || b == null) return false;
+	if (typeof a !== typeof b) return false;
+	if (Array.isArray(a) && Array.isArray(b)) {
+		if (a.length !== b.length) return false;
+		for (let i = 0; i < a.length; i++) {
+			if (!isDeepEqual(a[i], b[i])) return false;
 		}
+		return true;
 	}
-
-	// Find duplicates — keep the last occurrence of each key
-	const lastIndex = new Map<string, number>();
-	let hasDuplicates = false;
-	for (let i = 0; i < entries.length; i++) {
-		if (lastIndex.has(entries[i]!.key)) hasDuplicates = true;
-		lastIndex.set(entries[i]!.key, i);
-	}
-	if (!hasDuplicates) return;
-
-	const keep = new Set(lastIndex.values());
-	const newLines: string[] = [];
-	for (let i = 0; i < entries.length; i++) {
-		if (keep.has(i)) {
-			for (let j = entries[i]!.start; j <= entries[i]!.end; j++) {
-				newLines.push(lines[j]!);
-			}
+	if (typeof a === "object" && typeof b === "object") {
+		const aObj = a as Record<string, unknown>;
+		const bObj = b as Record<string, unknown>;
+		const aKeys = Object.keys(aObj);
+		const bKeys = Object.keys(bObj);
+		if (aKeys.length !== bKeys.length) return false;
+		for (const key of aKeys) {
+			if (!isDeepEqual(aObj[key], bObj[key])) return false;
 		}
+		return true;
 	}
-
-	const lineEnding = content.includes("\r\n") ? "\r\n" : "\n";
-	const newContent = content.replace(/^---\r?\n[\s\S]*?\r?\n---/, `---${lineEnding}${newLines.join(lineEnding)}${lineEnding}---`);
-	if (newContent !== content) {
-		await app.vault.modify(file, newContent);
-		console.debug("Garmin Health Sync: Deduplicated frontmatter in", file.path);
-	}
+	return false;
 }
 
 /**
