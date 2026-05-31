@@ -107,21 +107,33 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					this.display();
 				}));
 
-		// Garmin Login — treat paused auto-sync as "not logged in" because the
-		// pause flag is only set after a real auth failure against the API, while
-		// isSessionValid() is just a 30-day local timestamp heuristic.
-		const isLoggedIn = this.plugin.isSessionValid() && !this.plugin.settings.autoSyncPaused;
+		// Garmin Login
+		const hasSavedSession = this.plugin.isSessionValid();
+		const garminStatus = !hasSavedSession
+			? t("settingsGarminLoggedOut", lang)
+			: this.plugin.settings.autoSyncPaused
+				? t("settingsGarminPaused", lang)
+				: t("settingsGarminLoggedIn", lang);
 		const loginSetting = new Setting(containerEl)
 			.setName(t("settingsGarminLogin", lang))
-			.setDesc(isLoggedIn ? t("settingsGarminLoggedIn", lang) : t("settingsGarminLoggedOut", lang));
+			.setDesc(garminStatus);
 
-		if (isLoggedIn) {
+		if (hasSavedSession) {
 			loginSetting.addButton(btn => btn
 				.setButtonText(t("settingsGarminLogout", lang))
 				.onClick(async () => {
 					await this.plugin.logout();
 					this.display();
 				}));
+			if (this.plugin.settings.autoSyncPaused) {
+				loginSetting.addButton(btn => btn
+					.setButtonText(t("settingsGarminLogin", lang))
+					.setCta()
+					.onClick(async () => {
+						await this.plugin.loginViaBrowser();
+						this.display();
+					}));
+			}
 		} else {
 			loginSetting.addButton(btn => btn
 				.setButtonText(t("settingsGarminLogin", lang))

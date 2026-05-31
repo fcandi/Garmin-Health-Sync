@@ -152,7 +152,7 @@ Each activity is assigned a category:
 
 This plugin makes network requests to two external services:
 
-- **Garmin Connect** — a browser window authenticates with Garmin Connect using your credentials. No password is stored by the plugin; only a session token (valid for 30 days) is saved in Obsidian's local plugin data.
+- **Garmin Connect** — a browser window authenticates with Garmin Connect using your credentials. No password is stored by the plugin. Local plugin data may store Garmin session data, including session cookies, so the plugin can restore the browser session without asking you to log in again. Treat this session data like a login token: its lifetime is controlled by Garmin, and it may be included in backups or sync tools if they include Obsidian plugin data. Using **Logout** clears the stored Garmin session data on this device.
 - **Nominatim (OpenStreetMap)** — if the "Workout location" feature is enabled, the GPS coordinates of your first activity are sent to `nominatim.openstreetmap.org` for reverse geocoding. You can disable this in settings under *Workout location*.
 
 No data is sent to any other server.

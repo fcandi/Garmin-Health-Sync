@@ -6,6 +6,8 @@ Sincroniza automáticamente pasos, sueño, frecuencia cardíaca, estrés, activi
 
 > **Solo escritorio.** Este plugin utiliza BrowserWindow de Electron para la autenticación de Garmin Connect y no funciona en dispositivos móviles.
 
+> **Nota:** Este plugin utiliza la API web interna de Garmin Connect mediante una sesión de navegador Electron; no existe una API oficial de terceros.
+
 ## Características
 
 - **Sincronización automática al iniciar** — comprueba los últimos 7 días y completa los datos de salud faltantes
@@ -70,6 +72,12 @@ trainings:
     calories: 420
 ---
 ```
+
+## Requisitos
+
+- **Obsidian Desktop** (Windows, macOS, Linux) — el plugin no funciona en móvil
+- **Cuenta de Garmin** con acceso a Garmin Connect
+- Plugin **Daily Notes** o **Periodic Notes** activado (o configurar la ruta manualmente en los ajustes)
 
 ## Instalación
 
@@ -138,6 +146,15 @@ A cada actividad se le asigna una categoría:
 | `racket` | tennis, badminton, squash, table_tennis, pickleball |
 | `team` | soccer, basketball, volleyball, rugby |
 | `other` | golf, meditation, multi_sport |
+
+## Datos y privacidad
+
+Este plugin realiza solicitudes de red a dos servicios externos:
+
+- **Garmin Connect** — una ventana del navegador se autentica con Garmin Connect usando tus credenciales. El plugin no almacena tu contraseña. Los datos locales del plugin pueden almacenar datos de sesión de Garmin, incluidas cookies de sesión, para que el plugin pueda restaurar la sesión del navegador sin pedirte que inicies sesión de nuevo. Trata estos datos de sesión como un token de inicio de sesión: su duración la controla Garmin, y pueden incluirse en copias de seguridad o herramientas de sincronización si estas incluyen datos de plugins de Obsidian. **Cerrar sesión** elimina los datos de sesión de Garmin guardados en este dispositivo.
+- **Nominatim (OpenStreetMap)** — si la función **Ubicación del entrenamiento** está activada, las coordenadas GPS de tu primera actividad se envían a `nominatim.openstreetmap.org` para geocodificación inversa. Puedes desactivarlo en los ajustes, en **Ubicación del entrenamiento**.
+
+No se envían datos a ningún otro servidor.
 
 ## Desarrollo
 

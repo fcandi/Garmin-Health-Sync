@@ -78,11 +78,30 @@ export function calculateBatchDelay(endpointCount: number): number {
 export interface GarminSession {
 	displayName: string;
 	timestamp: number;
+	cookies?: GarminCookie[];
+}
+
+interface GarminCookie {
+	name: string;
+	value: string;
+	domain: string;
+	path?: string;
+	secure?: boolean;
+	httpOnly?: boolean;
+	expirationDate?: number;
+	sameSite?: "unspecified" | "no_restriction" | "lax" | "strict";
 }
 
 type BrowserWindowType = {
 	webContents: {
-		session: { cookies: { get: (filter: { domain: string }) => Promise<Array<{ name: string; value: string }>> } };
+		session: {
+			cookies: {
+				get: (filter: { url?: string; domain?: string; name?: string }) => Promise<GarminCookie[]>;
+				set: (details: GarminCookie & { url: string }) => Promise<void>;
+				remove: (url: string, name: string) => Promise<void>;
+			};
+			flushStorageData?: () => Promise<void>;
+		};
 		executeJavaScript: (code: string) => Promise<string>;
 		getURL: () => string;
 		insertCSS: (css: string) => Promise<string>;
@@ -138,25 +157,28 @@ export class GarminApi {
 		this.browserWindow = null;
 	}
 
+	async clearSession(): Promise<void> {
+		this.session = null;
+		this.clearCache();
+		await this.clearGarminCookies();
+		this.closeBrowser();
+	}
+
 	/** Login via Electron BrowserWindow.
 	 *  @param opts.silent  If true, never shows the window and uses a shorter
 	 *                      timeout. Used by auto-sync for invisible cookie refresh. */
 	async loginViaBrowser(opts: { silent?: boolean } = {}): Promise<boolean> {
 		const silent = opts.silent ?? false;
-		// eslint-disable-next-line @typescript-eslint/no-require-imports -- Electron must be loaded via require() at runtime in Obsidian plugins
-		const electron = require("electron") as { remote?: { BrowserWindow: new (opts: object) => BrowserWindowType }; BrowserWindow: new (opts: object) => BrowserWindowType };
-		const { BrowserWindow } = electron.remote ?? electron;
+		const BrowserWindow = this.getBrowserWindowConstructor();
 
 		const signinParams: Record<string, string> = { clientId: "GarminConnect", service: this.urls.appBase };
 		const signinUrl = this.buildUrl(this.urls.ssoSignin, signinParams);
 
 		return new Promise<boolean>((resolve) => {
-			// Start hidden in silent mode OR if session is known (auto-login expected)
-			const hasSession = this.session !== null;
-		const authWindow: BrowserWindowType = new BrowserWindow({
+			const authWindow: BrowserWindowType = new BrowserWindow({
 				width: 500,
 				height: 700,
-				show: !silent && !hasSession,
+				show: !silent,
 				title: "Garmin Connect Login",
 				webPreferences: {
 					nodeIntegration: false,
@@ -166,6 +188,22 @@ export class GarminApi {
 
 			let resolved = false;
 			let pollInterval: ReturnType<typeof setInterval> | null = null;
+			let connectFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+			let silentSignInTimer: ReturnType<typeof setTimeout> | null = null;
+
+			const completeLogin = async (displayName: string): Promise<void> => {
+				if (resolved) return;
+				await this.captureSession(authWindow, displayName);
+				resolved = true;
+				if (showTimer) clearTimeout(showTimer);
+				if (connectFallbackTimer) clearTimeout(connectFallbackTimer);
+				if (silentSignInTimer) clearTimeout(silentSignInTimer);
+				clearTimeout(globalTimeout);
+				this.browserWindow = authWindow;
+				if (!authWindow.isDestroyed()) authWindow.hide();
+				console.debug("Garmin Health Sync: Login successful, displayName:", displayName);
+				resolve(true);
+			};
 
 			// Global timeouts — always active, regardless of the loaded page.
 			// Fix: when session cookies expire, Garmin loads the SSO page instead of
@@ -202,6 +240,21 @@ export class GarminApi {
 				console.debug("Garmin Health Sync: Page loaded:", url);
 
 				const isConnectPage = url.startsWith(this.urls.appBase) || url.startsWith(this.urls.modernBase);
+				const isSignInPage = url.startsWith(this.urls.ssoSignin);
+				if (silent && isSignInPage && !resolved && !silentSignInTimer) {
+					silentSignInTimer = setTimeout(() => {
+						if (resolved || authWindow.isDestroyed()) return;
+						const currentUrl = authWindow.webContents.getURL();
+						const stillSignInPage = currentUrl.startsWith(this.urls.ssoSignin);
+						if (!stillSignInPage) return;
+						if (pollInterval) clearInterval(pollInterval);
+						resolved = true;
+						clearTimeout(globalTimeout);
+						console.debug("Garmin Health Sync: Silent login needs interactive sign-in");
+						authWindow.close();
+						resolve(false);
+					}, 7000);
+				}
 				if (isConnectPage && !resolved) {
 					// Polling: wait until the app reveals the displayName in a URL
 					pollInterval = setInterval(() => {
@@ -213,14 +266,7 @@ export class GarminApi {
 							);
 							if (this.isPlausibleDisplayName(name)) {
 								clearInterval(pollInterval!);
-								resolved = true;
-								if (showTimer) clearTimeout(showTimer);
-								clearTimeout(globalTimeout);
-								this.session = { displayName: name, timestamp: Date.now() };
-								this.browserWindow = authWindow;
-								authWindow.hide();
-								console.debug("Garmin Health Sync: Login successful, displayName:", name);
-								resolve(true);
+								await completeLogin(name);
 							} else {
 								console.debug("Garmin Health Sync: Waiting for displayName...");
 							}
@@ -229,18 +275,38 @@ export class GarminApi {
 						}
 						})();
 					}, 2000);
+
+					const savedName = this.session?.displayName;
+					if (this.isPlausibleDisplayName(savedName) && !connectFallbackTimer) {
+						connectFallbackTimer = setTimeout(() => {
+							if (resolved || authWindow.isDestroyed()) return;
+							const currentUrl = authWindow.webContents.getURL();
+							const stillConnectPage = currentUrl.startsWith(this.urls.appBase) || currentUrl.startsWith(this.urls.modernBase);
+							if (!stillConnectPage) return;
+							console.debug("Garmin Health Sync: Connect app loaded; reusing saved displayName");
+							void completeLogin(savedName);
+						}, 5000);
+					}
 				}
 			});
 
 			authWindow.on("closed", () => {
 				if (showTimer) clearTimeout(showTimer);
+				if (connectFallbackTimer) clearTimeout(connectFallbackTimer);
+				if (silentSignInTimer) clearTimeout(silentSignInTimer);
 				clearTimeout(globalTimeout);
 				if (pollInterval) clearInterval(pollInterval);
 				if (this.browserWindow === authWindow) this.browserWindow = null;
 				if (!resolved) { resolved = true; resolve(false); }
 			});
 
-			void authWindow.loadURL(signinUrl);
+			void this.restoreCookies(authWindow)
+				.catch(e => console.debug("Garmin Health Sync: Cookie restore failed:", e))
+				.then(() => {
+					if (!authWindow.isDestroyed()) return authWindow.loadURL(signinUrl);
+					return undefined;
+				})
+				.catch(e => console.debug("Garmin Health Sync: Login page load failed:", e));
 		});
 	}
 
@@ -399,6 +465,116 @@ export class GarminApi {
 		`).catch((e: unknown) => { console.debug("Garmin Health Sync: Interceptor injection failed:", e); });
 	}
 
+	private getCookieUrls(): string[] {
+		return [
+			this.urls.connectBase,
+			this.urls.appBase,
+			this.urls.modernBase,
+			new URL(this.urls.ssoSignin).origin,
+		];
+	}
+
+	private async captureSession(win: BrowserWindowType, displayName: string, opts: { refreshTimestamp?: boolean } = {}): Promise<void> {
+		const cookieMap = new Map<string, GarminCookie>();
+		const existingCookies = this.session?.cookies ?? [];
+		for (const url of this.getCookieUrls()) {
+			const cookies = await win.webContents.session.cookies.get({ url }).catch(e => {
+				console.debug("Garmin Health Sync: Cookie capture failed:", url, e);
+				return [];
+			});
+			for (const cookie of cookies) {
+				const key = `${cookie.domain};${cookie.path ?? "/"};${cookie.name}`;
+				cookieMap.set(key, {
+					name: cookie.name,
+					value: cookie.value,
+					domain: cookie.domain,
+					path: cookie.path ?? "/",
+					secure: cookie.secure,
+					httpOnly: cookie.httpOnly,
+					expirationDate: cookie.expirationDate,
+					sameSite: cookie.sameSite,
+				});
+			}
+		}
+
+		const capturedCookies = Array.from(cookieMap.values());
+		this.session = {
+			displayName,
+			timestamp: opts.refreshTimestamp === false ? this.session?.timestamp ?? Date.now() : Date.now(),
+			cookies: capturedCookies.length > 0 ? capturedCookies : existingCookies,
+		};
+	}
+
+	private async restoreCookies(win: BrowserWindowType): Promise<void> {
+		if (!this.session?.cookies?.length) return;
+
+		const nowSeconds = Date.now() / 1000;
+		for (const cookie of this.session.cookies) {
+			if (cookie.expirationDate && cookie.expirationDate <= nowSeconds) continue;
+			const url = this.cookieUrl(cookie);
+			if (!url) continue;
+			await win.webContents.session.cookies.set({
+				...cookie,
+				path: cookie.path ?? "/",
+				url,
+			}).catch(e => console.debug("Garmin Health Sync: Cookie restore skipped:", cookie.name, e));
+		}
+
+		await win.webContents.session.flushStorageData?.();
+	}
+
+	private cookieUrl(cookie: GarminCookie): string | null {
+		const domain = cookie.domain.replace(/^\./, "");
+		if (!domain || !/^[A-Za-z0-9.-]+$/.test(domain)) {
+			console.debug("Garmin Health Sync: Skipping cookie with invalid domain:", cookie.name);
+			return null;
+		}
+		return `https://${domain}${cookie.path ?? "/"}`;
+	}
+
+	private getBrowserWindowConstructor(): new (opts: object) => BrowserWindowType {
+		// eslint-disable-next-line @typescript-eslint/no-require-imports -- Electron must be loaded via require() at runtime in Obsidian plugins
+		const electron = require("electron") as { remote?: { BrowserWindow: new (opts: object) => BrowserWindowType }; BrowserWindow: new (opts: object) => BrowserWindowType };
+		return (electron.remote ?? electron).BrowserWindow;
+	}
+
+	private async clearGarminCookies(): Promise<void> {
+		const BrowserWindow = this.getBrowserWindowConstructor();
+		const cleanupWindow = this.isBrowserReady()
+			? this.browserWindow!
+			: new BrowserWindow({
+				width: 1,
+				height: 1,
+				show: false,
+				title: "Garmin Connect Logout",
+				webPreferences: {
+					nodeIntegration: false,
+					contextIsolation: false,
+				},
+			});
+		const shouldCloseCleanupWindow = cleanupWindow !== this.browserWindow;
+
+		try {
+			const seen = new Set<string>();
+			for (const url of this.getCookieUrls()) {
+				const cookies = await cleanupWindow.webContents.session.cookies.get({ url });
+				for (const cookie of cookies) {
+					const key = `${cookie.domain};${cookie.path ?? "/"};${cookie.name}`;
+					if (seen.has(key)) continue;
+					seen.add(key);
+					const cookieUrl = this.cookieUrl(cookie);
+					if (!cookieUrl) continue;
+					await cleanupWindow.webContents.session.cookies.remove(cookieUrl, cookie.name)
+						.catch(e => console.debug("Garmin Health Sync: Cookie removal skipped:", cookie.name, e));
+				}
+			}
+
+			await cleanupWindow.webContents.session.flushStorageData?.();
+		} finally {
+			if (shouldCloseCleanupWindow && !cleanupWindow.isDestroyed()) cleanupWindow.close();
+		}
+	}
+
 	/** Ensure BrowserWindow is ready */
 	async ensureBrowser(): Promise<boolean> {
 		if (this.isBrowserReady()) return true;
@@ -473,20 +649,22 @@ export class GarminApi {
 			const data = await this.fetchDirectInBrowser(date);
 			const missing = this.getMissingRequiredEndpoints(data);
 			if (Object.keys(data).length > 0 && missing.length === 0) {
+				await this.refreshSessionFromBrowser();
 				console.debug("Garmin Health Sync: Direct fetch OK ✓ keys:", Object.keys(data).join(", "));
 				return data;
 			}
 			console.debug("Garmin Health Sync: Direct fetch incomplete, falling back to navigation. Missing:", missing.join(", ") || "all");
 			const navigationData = await this.fetchViaNavigation(date);
-			await this.refreshDisplayNameFromBrowser();
+			await this.refreshSessionFromBrowser();
 			return { ...data, ...navigationData };
 		} catch (e) {
+			if (e instanceof Error && e.message === "login_required") throw e;
 			console.debug("Garmin Health Sync: Direct fetch failed, falling back to navigation:", e);
 		}
 
 		// Slow path: page navigation + interceptor (~10-15s)
 		const navigationData = await this.fetchViaNavigation(date);
-		await this.refreshDisplayNameFromBrowser();
+		await this.refreshSessionFromBrowser();
 		return navigationData;
 	}
 
@@ -495,7 +673,7 @@ export class GarminApi {
 		return endpointKeys.filter(key => !(key in data));
 	}
 
-	private async refreshDisplayNameFromBrowser(): Promise<void> {
+	private async refreshSessionFromBrowser(): Promise<void> {
 		if (!this.isBrowserReady()) return;
 		try {
 			const name = await this.browserWindow!.webContents.executeJavaScript(
@@ -503,7 +681,9 @@ export class GarminApi {
 			);
 			if (this.isPlausibleDisplayName(name) && this.session?.displayName !== name) {
 				console.debug("Garmin Health Sync: Refreshed displayName from browser session");
-				this.session = { displayName: name, timestamp: Date.now() };
+				await this.captureSession(this.browserWindow!, name);
+			} else if (this.session?.displayName) {
+				await this.captureSession(this.browserWindow!, this.session.displayName);
 			}
 		} catch {
 			// Ignore transient navigation errors.
@@ -551,15 +731,21 @@ export class GarminApi {
 		const entries = JSON.parse(rawJson) as Array<{ key: string; status: number; data: unknown; error?: string }>;
 		const results: Record<string, unknown> = {};
 		const failed: string[] = [];
+		const authFailed: string[] = [];
 
 		for (const entry of entries) {
 			if (entry.status === 200 && entry.data != null) {
 				results[entry.key] = this.transformResponse(entry.key, entry.data);
+			} else if (this.isAuthFailureStatus(entry.status)) {
+				authFailed.push(entry.key);
 			} else if (entry.status !== 200) {
 				failed.push(`${entry.key}:${entry.status}`);
 			}
 		}
 
+		if (authFailed.length > 0) {
+			console.debug("Garmin Health Sync: Direct fetch — auth-limited endpoints:", authFailed.join(", "));
+		}
 		if (failed.length > 0) {
 			console.debug("Garmin Health Sync: Direct fetch — failed endpoints:", failed.join(", "));
 		}
@@ -615,6 +801,7 @@ export class GarminApi {
 
 			const entries = JSON.parse(rawJson) as Array<{ key: string; status: number; data: unknown; error?: string }>;
 			const results: Record<string, unknown> = {};
+			const authFailed: string[] = [];
 
 			for (const entry of entries) {
 				if (entry.data != null && typeof entry.data === "object" && Object.keys(entry.data as Record<string, unknown>).length > 0) {
@@ -622,9 +809,14 @@ export class GarminApi {
 				} else if (Array.isArray(entry.data)) {
 					// Activities endpoint returns an array — could be empty [] for days without workouts
 					results[entry.key] = this.transformResponse(entry.key, entry.data);
+				} else if (this.isAuthFailureStatus(entry.status)) {
+					authFailed.push(entry.key);
 				}
 			}
 
+			if (authFailed.length > 0) {
+				console.debug("Garmin Health Sync: Supplemental fetch — auth-limited endpoints:", authFailed.join(", "));
+			}
 			return results;
 		} catch (e) {
 			console.debug("Garmin Health Sync: Supplemental fetch failed:", e);
@@ -673,6 +865,10 @@ export class GarminApi {
 		`);
 
 		const responses = JSON.parse(rawJson) as Record<string, unknown>;
+		const currentUrl = this.browserWindow!.webContents.getURL();
+		if (currentUrl.startsWith(this.urls.ssoSignin)) {
+			throw new Error("login_required");
+		}
 		console.debug("Garmin Health Sync: Navigation fetch keys:", Object.keys(responses).join(", "));
 
 		for (const [key, value] of Object.entries(responses)) {
@@ -801,6 +997,10 @@ export class GarminApi {
 	clearCache(): void {
 		this.cachedDate = "";
 		this.cachedData = {};
+	}
+
+	private isAuthFailureStatus(status: number): boolean {
+		return status === 401;
 	}
 
 	// --- Helpers ---

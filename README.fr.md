@@ -6,6 +6,8 @@ Synchronisez automatiquement les pas, le sommeil, la fréquence cardiaque, le st
 
 > **Bureau uniquement.** Ce plugin utilise le BrowserWindow d'Electron pour l'authentification Garmin Connect et ne fonctionne pas sur mobile.
 
+> **Remarque :** Ce plugin utilise l'API web interne de Garmin Connect via une session de navigateur Electron ; il n'existe pas d'API tierce officielle.
+
 ## Fonctionnalités
 
 - **Synchronisation automatique au démarrage** — vérifie les 7 derniers jours et complète les données de santé manquantes
@@ -70,6 +72,12 @@ trainings:
     calories: 420
 ---
 ```
+
+## Prérequis
+
+- **Obsidian Desktop** (Windows, macOS, Linux) — le plugin ne fonctionne pas sur mobile
+- **Compte Garmin** avec accès à Garmin Connect
+- Plugin **Daily Notes** ou **Periodic Notes** activé (ou chemin configuré manuellement dans les paramètres)
 
 ## Installation
 
@@ -138,6 +146,15 @@ Chaque activité se voit attribuer une catégorie :
 | `racket` | tennis, badminton, squash, table_tennis, pickleball |
 | `team` | soccer, basketball, volleyball, rugby |
 | `other` | golf, meditation, multi_sport |
+
+## Données et confidentialité
+
+Ce plugin effectue des requêtes réseau vers deux services externes :
+
+- **Garmin Connect** — une fenêtre de navigateur s'authentifie auprès de Garmin Connect avec vos identifiants. Le plugin ne stocke pas votre mot de passe. Les données locales du plugin peuvent stocker des données de session Garmin, y compris des cookies de session, afin que le plugin puisse restaurer la session du navigateur sans vous demander de vous reconnecter. Traitez ces données de session comme un jeton de connexion : leur durée de vie est contrôlée par Garmin, et elles peuvent être incluses dans des sauvegardes ou des outils de synchronisation si ceux-ci incluent les données des plugins Obsidian. **Déconnexion** supprime les données de session Garmin enregistrées sur cet appareil.
+- **Nominatim (OpenStreetMap)** — si la fonction **Lieu d'entraînement** est activée, les coordonnées GPS de votre première activité sont envoyées à `nominatim.openstreetmap.org` pour la géocodification inverse. Vous pouvez désactiver cette option dans les paramètres sous **Lieu d'entraînement**.
+
+Aucune donnée n'est envoyée à un autre serveur.
 
 ## Développement
 

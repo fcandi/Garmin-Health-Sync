@@ -28,6 +28,10 @@ export class GarminProvider implements HealthProvider {
 		this.api.setSession(session);
 	}
 
+	async clearSession(): Promise<void> {
+		await this.api.clearSession();
+	}
+
 	getSession(): GarminSession | null {
 		return this.api.getSession();
 	}
@@ -89,6 +93,10 @@ export class GarminProvider implements HealthProvider {
 			console.debug(`Garmin Health Sync: Mapper [${label}] →`, JSON.stringify(data));
 			Object.assign(metrics, data);
 		};
+		const warnOrRethrowAuth = (label: string, error: unknown): void => {
+			if (error instanceof Error && error.message === "login_required") throw error;
+			console.warn(`Garmin Health Sync: ${label} fetch failed`, error);
+		};
 
 		// Daily Summary
 		const needsSummary = ["steps", "resting_hr", "stress", "calories_total", "calories_active", "distance_km", "floors", "intensity_min"]
@@ -97,7 +105,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchDailySummary(date)
 					.then(data => merge("dailySummary", mapDailySummary(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: Daily summary fetch failed", e))
+					.catch(e => warnOrRethrowAuth("Daily summary", e))
 			);
 		}
 
@@ -108,7 +116,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchSleepData(date)
 					.then(data => merge("sleep", mapSleepData(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: Sleep data fetch failed", e))
+					.catch(e => warnOrRethrowAuth("Sleep data", e))
 			);
 		}
 
@@ -117,7 +125,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchHrv(date)
 					.then(data => merge("hrv", mapHrvData(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: HRV fetch failed", e))
+					.catch(e => warnOrRethrowAuth("HRV", e))
 			);
 		}
 
@@ -126,7 +134,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchBodyBattery(date)
 					.then(data => merge("bodyBattery", mapBodyBattery(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: Body Battery fetch failed", e))
+					.catch(e => warnOrRethrowAuth("Body Battery", e))
 			);
 		}
 
@@ -135,7 +143,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchSpO2(date)
 					.then(data => merge("spo2", mapSpO2(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: SpO2 fetch failed", e))
+					.catch(e => warnOrRethrowAuth("SpO2", e))
 			);
 		}
 
@@ -144,7 +152,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchRespiration(date)
 					.then(data => merge("respiration", mapRespiration(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: Respiration fetch failed", e))
+					.catch(e => warnOrRethrowAuth("Respiration", e))
 			);
 		}
 
@@ -153,7 +161,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchWeight(date)
 					.then(data => merge("weight", mapWeight(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: Weight fetch failed", e))
+					.catch(e => warnOrRethrowAuth("Weight", e))
 			);
 		}
 
@@ -162,7 +170,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchTrainingReadiness(date)
 					.then(data => merge("trainingReadiness", mapTrainingReadiness(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: Training Readiness fetch failed", e))
+					.catch(e => warnOrRethrowAuth("Training Readiness", e))
 			);
 		}
 
@@ -171,7 +179,7 @@ export class GarminProvider implements HealthProvider {
 			requests.push(
 				this.api.fetchTrainingStatus(date)
 					.then(data => merge("trainingStatus", mapTrainingStatus(data, enabled)))
-					.catch(e => console.warn("Garmin Health Sync: Training Status fetch failed", e))
+					.catch(e => warnOrRethrowAuth("Training Status", e))
 			);
 		}
 
@@ -187,7 +195,7 @@ export class GarminProvider implements HealthProvider {
 					trainings = result.trainings;
 					if (result.startLocation) startLocation = result.startLocation;
 				})
-				.catch(e => console.warn("Garmin Health Sync: Activities fetch failed", e))
+				.catch(e => warnOrRethrowAuth("Activities", e))
 		);
 
 		await Promise.all(requests);

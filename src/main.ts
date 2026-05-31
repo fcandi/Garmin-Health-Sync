@@ -10,6 +10,7 @@ export default class HealthSyncPlugin extends Plugin {
 	private syncManager: SyncManager;
 	private garminProvider: GarminProvider;
 	private autoSyncRunning = false;
+	private lastAutoSyncAttempt = 0;
 
 	async onload() {
 		await this.loadSettings();
@@ -45,7 +46,7 @@ export default class HealthSyncPlugin extends Plugin {
 				new BackfillModal(this.app, this.settings.language, (from, to) => {
 					void (async () => {
 						const count = await this.syncManager.backfill(from, to, this.settings);
-						if (count > 0) {
+						if (count > 0 || this.settings.autoSyncPaused) {
 							this.saveSession();
 							await this.saveSettings();
 						}
@@ -81,6 +82,18 @@ export default class HealthSyncPlugin extends Plugin {
 		if (!this.settings.autoSync) return;
 		if (this.settings.autoSyncPaused) return;
 		if (this.autoSyncRunning) return;
+
+		const now = Date.now();
+		const AUTO_SYNC_TRIGGER_DEBOUNCE_MS = 30 * 1000;
+		if (now - this.lastAutoSyncAttempt < AUTO_SYNC_TRIGGER_DEBOUNCE_MS) return;
+		this.lastAutoSyncAttempt = now;
+
+		const datesToSync = this.getAutoSyncDates();
+		if (datesToSync.length === 0) {
+			console.debug("Garmin Health Sync: Auto-sync — nothing to sync (all within cooldown or already synced)");
+			return;
+		}
+
 		if (!this.garminProvider.isSessionValid()) {
 			this.settings.autoSyncPaused = true;
 			await this.saveSettings();
@@ -100,7 +113,7 @@ export default class HealthSyncPlugin extends Plugin {
 				new Notice(t("noticeSessionExpired", this.settings.language));
 				return;
 			}
-			await this.runAutoSync();
+			await this.runAutoSync(datesToSync);
 		} finally {
 			this.autoSyncRunning = false;
 		}
@@ -114,10 +127,19 @@ export default class HealthSyncPlugin extends Plugin {
 	private async ensureAliveSession(): Promise<boolean> {
 		if (!this.garminProvider.isBrowserReady()) {
 			const ok = await this.garminProvider.silentAuthenticate();
-			if (!ok) return false;
-			this.saveSession();
-			await this.saveSettings();
-			return true;
+			if (ok) {
+				this.saveSession();
+				await this.saveSettings();
+				return true;
+			}
+
+			console.debug("Garmin Health Sync: Silent re-login failed — opening interactive login");
+			const interactiveOk = await this.garminProvider.authenticate();
+			if (interactiveOk) {
+				this.saveSession();
+				await this.saveSettings();
+			}
+			return interactiveOk;
 		}
 
 		const alive = await this.garminProvider.probeSession();
@@ -128,22 +150,25 @@ export default class HealthSyncPlugin extends Plugin {
 		if (reauthed) {
 			this.saveSession();
 			await this.saveSettings();
+			return true;
 		}
-		return reauthed;
+
+		console.debug("Garmin Health Sync: Silent re-login failed — opening interactive login");
+		this.garminProvider.closeBrowser();
+		const interactiveOk = await this.garminProvider.authenticate();
+		if (interactiveOk) {
+			this.saveSession();
+			await this.saveSettings();
+		}
+		return interactiveOk;
 	}
 
-	private async runAutoSync(): Promise<void> {
-		if (!this.garminProvider.isSessionValid()) return;
-
-		const now = Date.now();
+	private getAutoSyncDates(now = Date.now()): string[] {
 		const RESYNC_WINDOW_MS = 72 * 60 * 60 * 1000; // 72h — more recent data may be overwritten
 		const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
-		const FIRST_RESYNC_AFTER_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
-		const NO_DATA_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1h cooldown for dates that returned no data
 		const syncTimes = this.settings.lastSyncTimes;
-
-		// Check last 7 days — which ones need a (re-)sync?
 		const datesToSync: string[] = [];
+
 		for (let i = 1; i <= 7; i++) {
 			const d = new Date();
 			d.setDate(d.getDate() - i);
@@ -167,10 +192,16 @@ export default class HealthSyncPlugin extends Plugin {
 			}
 		}
 
-		if (datesToSync.length === 0) {
-			console.debug("Garmin Health Sync: Auto-sync — nothing to sync (all within cooldown or already synced)");
-			return;
-		}
+		return datesToSync;
+	}
+
+	private async runAutoSync(datesToSync: string[]): Promise<void> {
+		if (!this.garminProvider.isSessionValid()) return;
+
+		const now = Date.now();
+		const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
+		const FIRST_RESYNC_AFTER_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
+		const NO_DATA_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1h cooldown for dates that returned no data
 
 		console.debug("Garmin Health Sync: Auto-sync — syncing:", datesToSync.join(", "));
 
@@ -288,8 +319,9 @@ export default class HealthSyncPlugin extends Plugin {
 
 	/** Logout — clear session */
 	async logout(): Promise<void> {
-		this.garminProvider.setSession(null);
+		await this.garminProvider.clearSession();
 		this.settings.garminSession = "";
+		this.settings.autoSyncPaused = true;
 		await this.saveSettings();
 	}
 

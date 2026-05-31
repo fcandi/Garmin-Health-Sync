@@ -12,6 +12,7 @@ export const zh: Record<TranslationKeys, string> = {
 	regionChina: "中国版 (garmin.cn)",
 	settingsGarminLogin: "Garmin Connect",
 	settingsGarminLoggedIn: "已连接 — 会话有效",
+	settingsGarminPaused: "会话已保存 — 认证错误后自动同步已暂停",
 	settingsGarminLoggedOut: "未连接",
 	settingsGarminLogout: "退出登录",
 	settingsAutoSync: "自动同步每日笔记",

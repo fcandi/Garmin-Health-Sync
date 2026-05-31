@@ -10,6 +10,7 @@ export const en = {
 	regionChina: "China (garmin.cn)",
 	settingsGarminLogin: "Garmin Connect",
 	settingsGarminLoggedIn: "Connected — session active",
+	settingsGarminPaused: "Session saved — auto-sync paused after an auth error",
 	settingsGarminLoggedOut: "Not connected",
 	settingsGarminLogout: "Logout",
 	settingsAutoSync: "Auto-sync health data",

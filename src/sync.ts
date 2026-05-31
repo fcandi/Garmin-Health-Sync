@@ -84,6 +84,7 @@ export class SyncManager {
 
 		new Notice(t("noticeBackfillStart", settings.language));
 
+		let count = 0;
 		try {
 			if (!this.provider.isSessionValid()) {
 				const authenticated = await this.provider.authenticate();
@@ -95,7 +96,6 @@ export class SyncManager {
 				.map(([key]) => key);
 
 			const dates = this.dateRange(fromDate, toDate);
-			let count = 0;
 
 			// Calculate delay based on number of endpoints (50 req/min budget)
 			const batchDelay = this.provider.getRecommendedBatchDelay?.(enabledMetrics) ?? 2000;
@@ -125,6 +125,11 @@ export class SyncManager {
 						await this.sleep(batchDelay);
 					}
 				} catch (error) {
+					if (error instanceof Error && error.message === "login_required") {
+						settings.autoSyncPaused = true;
+						new Notice(t("noticeLoginRequired", settings.language));
+						throw error;
+					}
 					console.warn(`Garmin Health Sync: Backfill failed for ${date}`, error);
 				}
 			}
@@ -132,6 +137,9 @@ export class SyncManager {
 			new Notice(t("noticeBackfillDone", settings.language).replace("{count}", String(count)));
 			return count;
 		} catch (error) {
+			if (error instanceof Error && error.message === "login_required") {
+				return count;
+			}
 			console.error("Garmin Health Sync: Backfill failed", error);
 			new Notice(t("noticeSyncError", settings.language));
 			return 0;

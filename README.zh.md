@@ -6,6 +6,8 @@
 
 > **仅限桌面端。** 本插件使用 Electron 的 BrowserWindow 进行 Garmin Connect 身份验证，不支持移动设备。
 
+> **注意：** 本插件通过 Electron 浏览器会话使用 Garmin Connect 的内部 Web API；Garmin 没有提供官方第三方 API。
+
 ## 功能特性
 
 - **启动时自动同步** —— 检查最近 7 天并补充缺失的健康数据
@@ -70,6 +72,12 @@ trainings:
     calories: 420
 ---
 ```
+
+## 要求
+
+- **Obsidian Desktop**（Windows、macOS、Linux）——本插件不支持移动端
+- 可访问 Garmin Connect 的 **Garmin 账号**
+- 已启用 **Daily Notes** 或 **Periodic Notes** 插件（或在设置中手动配置路径）
 
 ## 安装
 
@@ -138,6 +146,15 @@ Garmin 的 `typeKey` 值会被标准化为更简洁的规范键名：
 | `racket` | tennis, badminton, squash, table_tennis, pickleball |
 | `team` | soccer, basketball, volleyball, rugby |
 | `other` | golf, meditation, multi_sport |
+
+## 数据与隐私
+
+本插件会向两个外部服务发起网络请求：
+
+- **Garmin Connect** — 浏览器窗口会使用你的凭据登录 Garmin Connect。插件不会保存你的密码。本地插件数据可能会保存 Garmin 会话数据，包括会话 Cookie，以便插件无需再次要求登录即可恢复浏览器会话。请像对待登录令牌一样对待这些会话数据：其有效期由 Garmin 控制；如果备份或同步工具包含 Obsidian 插件数据，这些数据也可能被包含在其中。**退出登录**会清除此设备上保存的 Garmin 会话数据。
+- **Nominatim (OpenStreetMap)** — 如果启用了 **训练地点** 功能，你第一项活动的 GPS 坐标会发送到 `nominatim.openstreetmap.org` 进行反向地理编码。你可以在设置中的 **训练地点** 关闭此功能。
+
+不会向其他服务器发送数据。
 
 ## 开发
 

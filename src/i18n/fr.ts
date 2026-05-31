@@ -12,6 +12,7 @@ export const fr: Record<TranslationKeys, string> = {
 	regionChina: "Chine (garmin.cn)",
 	settingsGarminLogin: "Garmin Connect",
 	settingsGarminLoggedIn: "Connecté — session active",
+	settingsGarminPaused: "Session enregistrée — synchronisation automatique en pause après une erreur d'authentification",
 	settingsGarminLoggedOut: "Non connecté",
 	settingsGarminLogout: "Déconnexion",
 	settingsAutoSync: "Synchroniser la note quotidienne automatiquement",

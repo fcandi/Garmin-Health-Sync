@@ -6,6 +6,8 @@ Synchronisiere Schritte, Schlaf, Herzfrequenz, Stress, Aktivitäten und mehr aut
 
 > **Nur Desktop.** Dieses Plugin nutzt Electrons BrowserWindow zur Garmin-Connect-Authentifizierung und funktioniert nicht auf Mobilgeräten.
 
+> **Hinweis:** Dieses Plugin nutzt Garmins interne Web-API über eine Electron-Browser-Session — es gibt keine offizielle Drittanbieter-API.
+
 ## Funktionen
 
 - **Auto-Sync beim Start** — prüft die letzten 7 Tage und ergänzt fehlende Gesundheitsdaten
@@ -70,6 +72,12 @@ trainings:
     calories: 420
 ---
 ```
+
+## Voraussetzungen
+
+- **Obsidian Desktop** (Windows, macOS, Linux) — das Plugin funktioniert nicht auf Mobilgeräten
+- **Garmin-Konto** mit Zugriff auf Garmin Connect
+- **Daily Notes** oder **Periodic Notes** aktiviert (oder den Pfad manuell in den Einstellungen konfigurieren)
 
 ## Installation
 
@@ -138,6 +146,15 @@ Jeder Aktivität wird eine Kategorie zugewiesen:
 | `racket` | tennis, badminton, squash, table_tennis, pickleball |
 | `team` | soccer, basketball, volleyball, rugby |
 | `other` | golf, meditation, multi_sport |
+
+## Datenschutz
+
+Dieses Plugin stellt Netzwerkverbindungen zu zwei externen Diensten her:
+
+- **Garmin Connect** — ein Browserfenster authentifiziert dich mit deinen Garmin-Zugangsdaten. Das Plugin speichert kein Passwort. Lokale Plugin-Daten können Garmin-Session-Daten inklusive Session-Cookies speichern, damit das Plugin die Browser-Session wiederherstellen kann, ohne erneut nach einem Login zu fragen. Behandle diese Session-Daten wie einen Login-Token: Die Laufzeit wird von Garmin kontrolliert, und sie können in Backups oder Sync-Tools enthalten sein, wenn diese Obsidian-Plugin-Daten einschließen. **Abmelden** löscht die gespeicherten Garmin-Session-Daten auf diesem Gerät.
+- **Nominatim (OpenStreetMap)** — wenn **Workout-Ort** aktiviert ist, werden die GPS-Koordinaten deiner ersten Aktivität zur Rückwärts-Geokodierung an `nominatim.openstreetmap.org` gesendet. Du kannst dies in den Einstellungen unter **Workout-Ort** deaktivieren.
+
+Es werden keine Daten an andere Server gesendet.
 
 ## Entwicklung
 

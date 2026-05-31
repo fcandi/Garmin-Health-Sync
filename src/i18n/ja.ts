@@ -12,6 +12,7 @@ export const ja: Record<TranslationKeys, string> = {
 	regionChina: "中国版 (garmin.cn)",
 	settingsGarminLogin: "Garmin Connect",
 	settingsGarminLoggedIn: "接続済み — セッション有効",
+	settingsGarminPaused: "セッション保存済み — 認証エラー後に自動同期を一時停止中",
 	settingsGarminLoggedOut: "未接続",
 	settingsGarminLogout: "ログアウト",
 	settingsAutoSync: "デイリーノートを自動同期",
