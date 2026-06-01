@@ -116,7 +116,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 				: t("settingsGarminLoggedIn", lang);
 		const loginSetting = new Setting(containerEl)
 			.setName(t("settingsGarminLogin", lang))
-			.setDesc(garminStatus);
+			.setDesc(`${garminStatus}. ${t("settingsGarminSessionPrivacyDesc", lang)}`);
 
 		if (hasSavedSession) {
 			loginSetting.addButton(btn => btn

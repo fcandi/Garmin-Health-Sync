@@ -1,4 +1,5 @@
 import type { ServerRegion } from "../../settings";
+import { LoginRequiredError, isLoginRequiredError } from "../../errors";
 
 interface RegionUrls {
 	connectBase: string;
@@ -193,12 +194,12 @@ export class GarminApi {
 
 			const completeLogin = async (displayName: string): Promise<void> => {
 				if (resolved) return;
-				await this.captureSession(authWindow, displayName);
 				resolved = true;
 				if (showTimer) clearTimeout(showTimer);
 				if (connectFallbackTimer) clearTimeout(connectFallbackTimer);
 				if (silentSignInTimer) clearTimeout(silentSignInTimer);
 				clearTimeout(globalTimeout);
+				await this.captureSession(authWindow, displayName);
 				this.browserWindow = authWindow;
 				if (!authWindow.isDestroyed()) authWindow.hide();
 				console.debug("Garmin Health Sync: Login successful, displayName:", displayName);
@@ -474,17 +475,18 @@ export class GarminApi {
 		];
 	}
 
-	private async captureSession(win: BrowserWindowType, displayName: string, opts: { refreshTimestamp?: boolean } = {}): Promise<void> {
+	private async captureSession(win: BrowserWindowType, displayName: string): Promise<void> {
 		const cookieMap = new Map<string, GarminCookie>();
-		const existingCookies = this.session?.cookies ?? [];
-		for (const url of this.getCookieUrls()) {
-			const cookies = await win.webContents.session.cookies.get({ url }).catch(e => {
+		const cookieGroups = await Promise.all(this.getCookieUrls().map(async url => {
+			return win.webContents.session.cookies.get({ url }).catch(e => {
 				console.debug("Garmin Health Sync: Cookie capture failed:", url, e);
 				return [];
 			});
+		}));
+
+		for (const cookies of cookieGroups) {
 			for (const cookie of cookies) {
-				const key = `${cookie.domain};${cookie.path ?? "/"};${cookie.name}`;
-				cookieMap.set(key, {
+				cookieMap.set(this.cookieKey(cookie), {
 					name: cookie.name,
 					value: cookie.value,
 					domain: cookie.domain,
@@ -498,10 +500,20 @@ export class GarminApi {
 		}
 
 		const capturedCookies = Array.from(cookieMap.values());
+		if (capturedCookies.length === 0) {
+			console.debug("Garmin Health Sync: Cookie capture returned no cookies; keeping previous session timestamp");
+			if (this.session) {
+				this.session = { ...this.session, displayName };
+			} else {
+				this.session = { displayName, timestamp: 0, cookies: [] };
+			}
+			return;
+		}
+
 		this.session = {
 			displayName,
-			timestamp: opts.refreshTimestamp === false ? this.session?.timestamp ?? Date.now() : Date.now(),
-			cookies: capturedCookies.length > 0 ? capturedCookies : existingCookies,
+			timestamp: Date.now(),
+			cookies: capturedCookies,
 		};
 	}
 
@@ -509,16 +521,21 @@ export class GarminApi {
 		if (!this.session?.cookies?.length) return;
 
 		const nowSeconds = Date.now() / 1000;
+		const restoreTasks: Promise<void>[] = [];
 		for (const cookie of this.session.cookies) {
 			if (cookie.expirationDate && cookie.expirationDate <= nowSeconds) continue;
 			const url = this.cookieUrl(cookie);
 			if (!url) continue;
-			await win.webContents.session.cookies.set({
-				...cookie,
-				path: cookie.path ?? "/",
-				url,
-			}).catch(e => console.debug("Garmin Health Sync: Cookie restore skipped:", cookie.name, e));
+			restoreTasks.push(
+				win.webContents.session.cookies.set({
+					...cookie,
+					path: cookie.path ?? "/",
+					url,
+				}).catch(e => console.debug("Garmin Health Sync: Cookie restore skipped:", cookie.name, e))
+			);
 		}
+
+		await Promise.all(restoreTasks);
 
 		await win.webContents.session.flushStorageData?.();
 	}
@@ -530,6 +547,10 @@ export class GarminApi {
 			return null;
 		}
 		return `https://${domain}${cookie.path ?? "/"}`;
+	}
+
+	private cookieKey(cookie: Pick<GarminCookie, "domain" | "path" | "name">): string {
+		return `${cookie.domain};${cookie.path ?? "/"};${cookie.name}`;
 	}
 
 	private getBrowserWindowConstructor(): new (opts: object) => BrowserWindowType {
@@ -556,19 +577,28 @@ export class GarminApi {
 
 		try {
 			const seen = new Set<string>();
-			for (const url of this.getCookieUrls()) {
-				const cookies = await cleanupWindow.webContents.session.cookies.get({ url });
+			const cookieGroups = await Promise.all(this.getCookieUrls().map(async url => {
+				return cleanupWindow.webContents.session.cookies.get({ url }).catch(e => {
+					console.debug("Garmin Health Sync: Cookie lookup skipped during cleanup:", url, e);
+					return [];
+				});
+			}));
+			const removalTasks: Promise<void>[] = [];
+			for (const cookies of cookieGroups) {
 				for (const cookie of cookies) {
-					const key = `${cookie.domain};${cookie.path ?? "/"};${cookie.name}`;
+					const key = this.cookieKey(cookie);
 					if (seen.has(key)) continue;
 					seen.add(key);
 					const cookieUrl = this.cookieUrl(cookie);
 					if (!cookieUrl) continue;
-					await cleanupWindow.webContents.session.cookies.remove(cookieUrl, cookie.name)
-						.catch(e => console.debug("Garmin Health Sync: Cookie removal skipped:", cookie.name, e));
+					removalTasks.push(
+						cleanupWindow.webContents.session.cookies.remove(cookieUrl, cookie.name)
+							.catch(e => console.debug("Garmin Health Sync: Cookie removal skipped:", cookie.name, e))
+					);
 				}
 			}
 
+			await Promise.all(removalTasks);
 			await cleanupWindow.webContents.session.flushStorageData?.();
 		} finally {
 			if (shouldCloseCleanupWindow && !cleanupWindow.isDestroyed()) cleanupWindow.close();
@@ -658,7 +688,7 @@ export class GarminApi {
 			await this.refreshSessionFromBrowser();
 			return { ...data, ...navigationData };
 		} catch (e) {
-			if (e instanceof Error && e.message === "login_required") throw e;
+			if (isLoginRequiredError(e)) throw e;
 			console.debug("Garmin Health Sync: Direct fetch failed, falling back to navigation:", e);
 		}
 
@@ -867,7 +897,7 @@ export class GarminApi {
 		const responses = JSON.parse(rawJson) as Record<string, unknown>;
 		const currentUrl = this.browserWindow!.webContents.getURL();
 		if (currentUrl.startsWith(this.urls.ssoSignin)) {
-			throw new Error("login_required");
+			throw new LoginRequiredError();
 		}
 		console.debug("Garmin Health Sync: Navigation fetch keys:", Object.keys(responses).join(", "));
 

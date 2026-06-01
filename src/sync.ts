@@ -4,6 +4,7 @@ import { writeToDailyNote } from "./daily-note";
 import type { HealthSyncSettings } from "./settings";
 import { t } from "./i18n/t";
 import { convertToImperial } from "./units";
+import { isLoginRequiredError } from "./errors";
 
 export class SyncManager {
 	private provider: HealthProvider;
@@ -65,8 +66,8 @@ export class SyncManager {
 			if (!quiet) new Notice(t("noticeSyncSuccess", settings.language));
 			return true;
 		} catch (error) {
-			if (error instanceof Error && error.message === "login_required") {
-				new Notice(t("noticeLoginRequired", settings.language)); // Always show — user must act
+			if (isLoginRequiredError(error)) {
+				if (!quiet) new Notice(t("noticeLoginRequired", settings.language));
 				throw error; // Caller pauses autoSync
 			}
 			console.error("Garmin Health Sync: Sync failed", error);
@@ -125,7 +126,7 @@ export class SyncManager {
 						await this.sleep(batchDelay);
 					}
 				} catch (error) {
-					if (error instanceof Error && error.message === "login_required") {
+					if (isLoginRequiredError(error)) {
 						settings.autoSyncPaused = true;
 						new Notice(t("noticeLoginRequired", settings.language));
 						throw error;
@@ -137,7 +138,7 @@ export class SyncManager {
 			new Notice(t("noticeBackfillDone", settings.language).replace("{count}", String(count)));
 			return count;
 		} catch (error) {
-			if (error instanceof Error && error.message === "login_required") {
+			if (isLoginRequiredError(error)) {
 				return count;
 			}
 			console.error("Garmin Health Sync: Backfill failed", error);

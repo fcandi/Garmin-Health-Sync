@@ -1,6 +1,7 @@
 import type { HealthData, HealthProvider } from "../provider";
 import type { ServerRegion } from "../../settings";
 import { GarminApi, GarminSession, getRequiredEndpoints, calculateBatchDelay } from "./garmin-api";
+import { LoginRequiredError, isLoginRequiredError } from "../../errors";
 import {
 	mapDailySummary,
 	mapSleepData,
@@ -75,10 +76,10 @@ export class GarminProvider implements HealthProvider {
 
 	async fetchData(date: string, enabledMetrics: string[]): Promise<HealthData> {
 		// Upfront check: ensure browser session is ready before starting requests.
-		// If login fails, login_required is thrown — prevents silent "no data" result.
+		// If login fails, a typed auth error prevents a silent "no data" result.
 		if (!this.api.isBrowserReady()) {
 			const ok = await this.api.ensureBrowser();
-			if (!ok) throw new Error("login_required");
+			if (!ok) throw new LoginRequiredError();
 		}
 
 		const enabled = new Set(enabledMetrics);
@@ -94,7 +95,7 @@ export class GarminProvider implements HealthProvider {
 			Object.assign(metrics, data);
 		};
 		const warnOrRethrowAuth = (label: string, error: unknown): void => {
-			if (error instanceof Error && error.message === "login_required") throw error;
+			if (isLoginRequiredError(error)) throw error;
 			console.warn(`Garmin Health Sync: ${label} fetch failed`, error);
 		};
 

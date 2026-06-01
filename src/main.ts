@@ -4,6 +4,14 @@ import { SyncManager } from "./sync";
 import { GarminProvider } from "./providers/garmin/garmin-provider";
 import type { GarminSession } from "./providers/garmin/garmin-api";
 import { t } from "./i18n/t";
+import { isLoginRequiredError } from "./errors";
+
+const AUTO_SYNC_TRIGGER_DEBOUNCE_MS = 30 * 1000;
+const RESYNC_WINDOW_MS = 72 * 60 * 60 * 1000; // 72h — more recent data may be overwritten
+const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
+const FIRST_RESYNC_AFTER_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
+const NO_DATA_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1h cooldown for dates that returned no data
+const CLEANUP_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 
 export default class HealthSyncPlugin extends Plugin {
 	settings: HealthSyncSettings;
@@ -11,6 +19,7 @@ export default class HealthSyncPlugin extends Plugin {
 	private garminProvider: GarminProvider;
 	private autoSyncRunning = false;
 	private lastAutoSyncAttempt = 0;
+	private loginRequiredNotice: Notice | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -84,7 +93,6 @@ export default class HealthSyncPlugin extends Plugin {
 		if (this.autoSyncRunning) return;
 
 		const now = Date.now();
-		const AUTO_SYNC_TRIGGER_DEBOUNCE_MS = 30 * 1000;
 		if (now - this.lastAutoSyncAttempt < AUTO_SYNC_TRIGGER_DEBOUNCE_MS) return;
 		this.lastAutoSyncAttempt = now;
 
@@ -97,7 +105,7 @@ export default class HealthSyncPlugin extends Plugin {
 		if (!this.garminProvider.isSessionValid()) {
 			this.settings.autoSyncPaused = true;
 			await this.saveSettings();
-			new Notice(t("noticeSessionExpired", this.settings.language));
+			this.showGarminLoginRequiredNotice("expired");
 			return;
 		}
 
@@ -110,7 +118,7 @@ export default class HealthSyncPlugin extends Plugin {
 			if (!sessionOk) {
 				this.settings.autoSyncPaused = true;
 				await this.saveSettings();
-				new Notice(t("noticeSessionExpired", this.settings.language));
+				this.showGarminLoginRequiredNotice("silent re-login failed");
 				return;
 			}
 			await this.runAutoSync(datesToSync);
@@ -119,53 +127,35 @@ export default class HealthSyncPlugin extends Plugin {
 		}
 	}
 
-	/** Guarantees a usable Garmin session before a batch starts.
-	 *  - If no BrowserWindow is open yet → silent login.
-	 *  - If one is open → cheap probe; on failure → silent re-login.
-	 *  Returns false only if the session is genuinely dead and the user must
-	 *  log in manually again. */
+	/** Guarantees a usable Garmin session before a batch starts without showing
+	 *  interactive login UI. Auto-sync may pause itself, but it must not surprise
+	 *  the user with a Garmin login popup while opening a daily note. */
 	private async ensureAliveSession(): Promise<boolean> {
 		if (!this.garminProvider.isBrowserReady()) {
-			const ok = await this.garminProvider.silentAuthenticate();
-			if (ok) {
-				this.saveSession();
-				await this.saveSettings();
-				return true;
-			}
-
-			console.debug("Garmin Health Sync: Silent re-login failed — opening interactive login");
-			const interactiveOk = await this.garminProvider.authenticate();
-			if (interactiveOk) {
-				this.saveSession();
-				await this.saveSettings();
-			}
-			return interactiveOk;
+			return this.trySilentReauth("browser not ready");
 		}
 
 		const alive = await this.garminProvider.probeSession();
 		if (alive) return true;
 
 		console.debug("Garmin Health Sync: Session probe failed — attempting silent re-login");
-		const reauthed = await this.garminProvider.silentAuthenticate();
-		if (reauthed) {
-			this.saveSession();
-			await this.saveSettings();
-			return true;
-		}
-
-		console.debug("Garmin Health Sync: Silent re-login failed — opening interactive login");
 		this.garminProvider.closeBrowser();
-		const interactiveOk = await this.garminProvider.authenticate();
-		if (interactiveOk) {
+		return this.trySilentReauth("probe failed");
+	}
+
+	private async trySilentReauth(reason: string): Promise<boolean> {
+		console.debug(`Garmin Health Sync: Attempting silent re-login (${reason})`);
+		const ok = await this.garminProvider.silentAuthenticate();
+		if (ok) {
 			this.saveSession();
 			await this.saveSettings();
+		} else {
+			console.debug("Garmin Health Sync: Silent re-login failed — manual login required");
 		}
-		return interactiveOk;
+		return ok;
 	}
 
 	private getAutoSyncDates(now = Date.now()): string[] {
-		const RESYNC_WINDOW_MS = 72 * 60 * 60 * 1000; // 72h — more recent data may be overwritten
-		const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
 		const syncTimes = this.settings.lastSyncTimes;
 		const datesToSync: string[] = [];
 
@@ -199,9 +189,6 @@ export default class HealthSyncPlugin extends Plugin {
 		if (!this.garminProvider.isSessionValid()) return;
 
 		const now = Date.now();
-		const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
-		const FIRST_RESYNC_AFTER_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
-		const NO_DATA_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1h cooldown for dates that returned no data
 
 		console.debug("Garmin Health Sync: Auto-sync — syncing:", datesToSync.join(", "));
 
@@ -238,7 +225,6 @@ export default class HealthSyncPlugin extends Plugin {
 			}
 
 			// Clean up old entries (older than 8 days)
-			const CLEANUP_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 			for (const [dateKey, timestamp] of Object.entries(this.settings.lastSyncTimes)) {
 				if (now - timestamp > CLEANUP_AGE_MS) {
 					delete this.settings.lastSyncTimes[dateKey];
@@ -253,8 +239,9 @@ export default class HealthSyncPlugin extends Plugin {
 				console.debug(`Garmin Health Sync: Auto-sync done — ${synced}/${datesToSync.length} days synced`);
 			}
 		} catch (error) {
-			// login_required: notice was already shown in syncDate
-			if (!(error instanceof Error && error.message === "login_required")) {
+			if (isLoginRequiredError(error)) {
+				this.showGarminLoginRequiredNotice("sync hit login_required");
+			} else {
 				console.error("Garmin Health Sync: Auto-sync failed", error);
 				new Notice(t("noticeAutoSyncPaused", this.settings.language));
 			}
@@ -279,7 +266,7 @@ export default class HealthSyncPlugin extends Plugin {
 				await this.saveSettings();
 			}
 		} catch (error) {
-			if (error instanceof Error && error.message === "login_required") {
+			if (isLoginRequiredError(error)) {
 				this.settings.autoSyncPaused = true;
 				await this.saveSettings();
 			}
@@ -389,6 +376,48 @@ export default class HealthSyncPlugin extends Plugin {
 	private saveSession(): void {
 		const garminSession = this.garminProvider.getSession();
 		this.settings.garminSession = garminSession ? JSON.stringify(garminSession) : "";
+	}
+
+	private showGarminLoginRequiredNotice(reason: string): void {
+		console.debug(`Garmin Health Sync: Login required — ${reason}`);
+		if (this.loginRequiredNotice) {
+			this.loginRequiredNotice.hide();
+			this.loginRequiredNotice = null;
+		}
+
+		const fragment = document.createDocumentFragment();
+		const wrapper = document.createElement("div");
+		const message = document.createElement("div");
+		message.textContent = t("noticeSessionExpired", this.settings.language);
+		wrapper.appendChild(message);
+
+		const button = document.createElement("button");
+		button.textContent = t("noticeLoginAction", this.settings.language);
+		wrapper.appendChild(button);
+
+		fragment.appendChild(wrapper);
+		const notice = new Notice(fragment, 0);
+		this.loginRequiredNotice = notice;
+		button.addEventListener("click", () => {
+			void this.loginFromNotice(notice, button);
+		});
+	}
+
+	private async loginFromNotice(notice: Notice, button: HTMLButtonElement): Promise<void> {
+		button.disabled = true;
+		button.textContent = t("noticeLoginInProgress", this.settings.language);
+		await this.loginViaBrowser();
+
+		if (this.garminProvider.isSessionValid() && !this.settings.autoSyncPaused) {
+			notice.hide();
+			if (this.loginRequiredNotice === notice) this.loginRequiredNotice = null;
+			this.lastAutoSyncAttempt = 0;
+			void this.tryAutoSync();
+			return;
+		}
+
+		button.disabled = false;
+		button.textContent = t("noticeLoginAction", this.settings.language);
 	}
 
 	private todayString(): string {
