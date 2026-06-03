@@ -10,9 +10,9 @@ interface RegionUrls {
 	modernBase: string;
 	ssoSignin: string;
 	apiBase: string;
-	domain: string;          // "garmin.com" | "garmin.cn" — für die OAuth-/connectapi-Endpoints
-	ssoEmbed: string;        // CAS-`service` + `login-url` für getOAuth1 (garth-Web-Flow, M1/M2)
-	ssoSigninWidget: string; // gauth-widget-Signin-Endpoint, liefert nach Login embed?ticket=ST-…
+	domain: string;          // "garmin.com" | "garmin.cn" — for the OAuth/connectapi endpoints
+	ssoEmbed: string;        // CAS `service` + `login-url` for getOAuth1 (garth web flow, M1/M2)
+	ssoSigninWidget: string; // gauth-widget signin endpoint, returns embed?ticket=ST-… after login
 }
 
 function getRegionUrls(region: ServerRegion): RegionUrls {
@@ -22,8 +22,8 @@ function getRegionUrls(region: ServerRegion): RegionUrls {
 	const ssoSignin = isChina
 		? "https://sso.garmin.cn/portal/sso/zh-CN/sign-in"
 		: "https://sso.garmin.com/portal/sso/en-US/sign-in";
-	// garth-Web-Embed-Flow: `service` + `login-url` = …/sso/embed; Login über das
-	// gauth-widget-Signin. Nach Login navigiert die Seite auf embed?ticket=ST-….
+	// garth web embed flow: `service` + `login-url` = …/sso/embed; login via the
+	// gauth-widget signin. After login the page navigates to embed?ticket=ST-….
 	const ssoEmbed = `https://sso.${domain}/sso/embed`;
 	const ssoSigninWidget = `https://sso.${domain}/sso/signin`;
 	return {
@@ -31,15 +31,15 @@ function getRegionUrls(region: ServerRegion): RegionUrls {
 		appBase: `${connectBase}/app`,
 		modernBase: `${connectBase}/modern`,
 		ssoSignin,
-		apiBase: `https://connectapi.${domain}`, // M3: Bearer-API statt Cookie-gc-api
+		apiBase: `https://connectapi.${domain}`, // M3: Bearer API instead of cookie-based gc-api
 		domain,
 		ssoEmbed,
 		ssoSigninWidget,
 	};
 }
 
-/** Robust gegen Electron-Versionen: Navigations-/Redirect-Events liefern die URL
- *  mal als String-Argument, mal als Event-Objekt mit `.url`. */
+/** Robust across Electron versions: navigation/redirect events deliver the URL
+ *  sometimes as a string argument, sometimes as an event object with `.url`. */
 function findUrlInArgs(args: unknown[]): string {
 	for (const a of args) {
 		if (typeof a === "string" && a.startsWith("http")) return a;
@@ -122,12 +122,12 @@ type BrowserWindowType = {
 };
 
 export class GarminApi {
-	// OAuth-Token (M1/M2): langlebiges OAuth1 + kurzlebiges OAuth2. Persistenz via main.ts.
+	// OAuth tokens (M1/M2): long-lived OAuth1 + short-lived OAuth2. Persisted via main.ts.
 	private oauth1: OAuth1Token | null = null;
 	private oauth2: OAuth2Token | null = null;
-	private consumer: Consumer | null = null;       // öffentliche Consumer-Keys, gecacht
-	private displayName = "";                          // aus socialProfile, gecacht
-	private readonly authState = new AuthStateMachine(); // Phase 7: Auth-/Refresh-Zustand
+	private consumer: Consumer | null = null;       // public consumer keys, cached
+	private displayName = "";                          // from socialProfile, cached
+	private readonly authState = new AuthStateMachine(); // Phase 7: auth/refresh state machine
 	private requiredEndpoints: string[] | null = null;
 	private urls: RegionUrls = getRegionUrls("international");
 	private endpoints: Record<string, (displayName: string, date: string) => string> = getEndpoints(this.urls.apiBase);
@@ -140,23 +140,23 @@ export class GarminApi {
 		this.endpoints = getEndpoints(this.urls.apiBase);
 	}
 
-	/** Setzt die persistierten OAuth-Token (beim Restore/Login). */
+	/** Sets the persisted OAuth tokens (on restore/login). */
 	setTokens(oauth1: OAuth1Token | null, oauth2: OAuth2Token | null): void {
 		this.oauth1 = oauth1;
 		this.oauth2 = oauth2;
 	}
 
-	/** Liefert die aktuellen Token zur Persistenz. */
+	/** Returns the current tokens for persistence. */
 	getTokens(): { oauth1: OAuth1Token | null; oauth2: OAuth2Token | null } {
 		return { oauth1: this.oauth1, oauth2: this.oauth2 };
 	}
 
-	/** Aktueller Auth-Zustand (für UI/Logik). */
+	/** Current auth state (for UI/logic). */
 	getAuthState(): AuthState {
 		return this.authState.state;
 	}
 
-	/** Darf der Auto-Sync jetzt einen Versuch starten? (Backoff/needsUserLogin) */
+	/** Is auto-sync allowed to attempt a run right now? (backoff/needsUserLogin) */
 	shouldAttemptSync(): boolean {
 		return this.authState.shouldAttemptSync();
 	}
@@ -166,8 +166,8 @@ export class GarminApi {
 		this.requiredEndpoints = endpoints;
 	}
 
-	/** Gültig = langlebiges OAuth1-Token vorhanden (ersetzt die 30-Tage-Heuristik,
-	 *  die Wurzelursache der Auto-Sync-Pausen). */
+	/** Valid = long-lived OAuth1 token present (replaces the 30-day heuristic
+	 *  that was the root cause of auto-sync pauses). */
 	isSessionValid(): boolean {
 		return this.oauth1 != null;
 	}
@@ -181,16 +181,16 @@ export class GarminApi {
 		this.clearCache();
 	}
 
-	// === M1: OAuth-Ticket-Abgriff aus dem BrowserWindow (garth-Web-Embed-Flow) ===
-	// Lädt das gauth-widget-Signin mit `service=…/sso/embed`. Nach erfolgreichem
-	// Login (+ MFA) navigiert die Seite auf `…/sso/embed?ticket=ST-…` — das Ticket
-	// steht in der URL (und im HTML). Abgriff über zwei Wege:
-	//   (a) Navigations-URL mit `ticket=…`  (Primärweg)
-	//   (b) HTML-Scrape der Seite nach `embed?ticket=…`  (Backup)
-	// `preauthorized` (getOAuth1) bekommt `login-url=…/sso/embed`, passend zum
-	// `service`. Bei Fehlschlag: Navigations-URLs (live geloggt) + HTML-Diagnose.
-	// Dies ist der reguläre interaktive Login; OAuth2-Refresh + Datenabruf laufen
-	// danach silent ohne BrowserWindow (ensureValidOAuth2/fetchDataForDate).
+	// === M1: OAuth ticket capture from the BrowserWindow (garth web embed flow) ===
+	// Loads the gauth-widget signin with `service=…/sso/embed`. After a successful
+	// login (+ MFA) the page navigates to `…/sso/embed?ticket=ST-…` — the ticket
+	// is in the URL (and in the HTML). Captured via two paths:
+	//   (a) Navigation URL containing `ticket=…`  (primary path)
+	//   (b) HTML scrape of the page for `embed?ticket=…`  (fallback)
+	// `preauthorized` (getOAuth1) receives `login-url=…/sso/embed`, matching the
+	// `service`. On failure: navigation URLs (logged live) + HTML diagnostics.
+	// This is the regular interactive login; OAuth2 refresh + data fetching run
+	// silently afterwards without a BrowserWindow (ensureValidOAuth2/fetchDataForDate).
 	async loginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
 		// F9: concurrent login calls (settings button + notice button) share ONE
 		// window/result instead of opening two BrowserWindows racing for the tokens.
@@ -207,12 +207,12 @@ export class GarminApi {
 		const silent = opts.silent ?? false;
 		const BrowserWindow = this.getBrowserWindowConstructor();
 		const embed = this.urls.ssoEmbed;
-		// Bewiesene Konfiguration (Gate + E2E): embedWidget=true mit service=…/sso/embed
-		// liefert zuverlässig den embed?ticket=ST-…-Redirect. Das `cssUrl` lädt Garmins
-		// Branding-Stylesheet (gestyltes Formular, Titel „GARMIN Authentication
-		// Application"). Das Logo-Banner gehört zur Host-Seiten-Chrome und erscheint im
-		// eigenständig geladenen Widget nicht — bekanntes kosmetisches Limit (embedWidget
-		// false/true ändert daran nichts; getestet 2026-06-03).
+		// Proven configuration (gate + E2E): embedWidget=true with service=…/sso/embed
+		// reliably produces the embed?ticket=ST-… redirect. The `cssUrl` loads Garmin's
+		// branding stylesheet (styled form, title "GARMIN Authentication
+		// Application"). The logo banner belongs to the host-page chrome and does not
+		// appear in the standalone widget — known cosmetic limitation (embedWidget
+		// false/true makes no difference; tested 2026-06-03).
 		const signinUrl = this.buildUrl(this.urls.ssoSigninWidget, {
 			id: "gauth-widget",
 			embedWidget: "true",
@@ -233,7 +233,7 @@ export class GarminApi {
 		});
 		this.activeLoginWindow = win;   // F12: handle for closeActiveLogin() on plugin unload
 
-		// JS, das Seite/URL nach einem ST-Ticket durchsucht (kein Regex-Backslash → templatesicher).
+		// JS that searches the page/URL for an ST ticket (no regex backslash → template-safe).
 		const scrapeJs =
 			`(function(){try{` +
 			`var loc=(location&&location.search)||"";` +
@@ -251,14 +251,14 @@ export class GarminApi {
 				const finish = (t: { value: string; via: string } | null): void => {
 					if (done) return;
 					done = true;
-					// Ticket gegriffen → Fenster sofort verstecken, damit die Garmin-
-					// Embed-Ticket-Seite (rohe JSON-Antwort) nicht aufblitzt, während
-					// getOAuth1/exchange im Hintergrund laufen.
+					// Ticket captured → hide the window immediately so the Garmin
+					// embed ticket page (raw JSON response) does not flash while
+					// getOAuth1/exchange run in the background.
 					if (t && !win.isDestroyed()) { try { win.hide(); } catch { /* ignore */ } }
 					resolve(t);
 				};
 
-				// (a) Ticket aus einer Navigations-URL (jede URL mit ?ticket=…).
+				// (a) Ticket from a navigation URL (any URL containing ?ticket=…).
 				const onNav = (...args: unknown[]): void => {
 					const url = findUrlInArgs(args);
 					if (done || !url || !url.includes("ticket=")) return;
@@ -268,7 +268,7 @@ export class GarminApi {
 							console.debug(`Garmin Health Sync: M1 — ticket in nav URL (${new URL(url).host}):`, tk.slice(0, 14) + "…");
 							finish({ value: tk, via: "redirect" });
 						}
-					} catch { /* keine gültige URL */ }
+					} catch { /* not a valid URL */ }
 				};
 				for (const ev of ["will-redirect", "did-redirect-navigation", "did-navigate", "did-navigate-in-page", "did-start-navigation"]) {
 					win.webContents.on(ev, onNav);
@@ -290,7 +290,7 @@ export class GarminApi {
 							console.debug("Garmin Health Sync: M1 — ticket via HTML scrape:", tk.slice(0, 14) + "…");
 							finish({ value: tk, via: "scrape" });
 						}
-					}).catch(() => { /* Fenster navigiert gerade */ });
+					}).catch(() => { /* window is navigating */ });
 				};
 				for (const ev of ["did-stop-loading", "dom-ready"]) {
 					win.webContents.on(ev, scrapeOnce);
@@ -300,18 +300,18 @@ export class GarminApi {
 				// used to detect this via isDestroyed; without it we need the event).
 				win.on("closed", () => finish(null));
 
-				// Timeout: knappe Breadcrumb, auf welcher Seite der Login hängenblieb
-				// (ohne Query/Ticket, ohne HTML-Dump).
+				// Timeout: brief breadcrumb showing which page the login stalled on
+				// (without query/ticket, without HTML dump).
 				setTimeout(() => {
 					if (done) return;
 					void win.webContents.executeJavaScript(
 						`(function(){return JSON.stringify({url:(location.href||"").split("?")[0],title:document.title});})()`
 					).then((raw: unknown) => {
 						console.debug("Garmin Health Sync: login timed out without a ticket. Page:", typeof raw === "string" ? raw : "(none)");
-					}).catch(() => { /* Fenster evtl. zerstört */ }).then(() => finish(null));
+					}).catch(() => { /* window may already be destroyed */ }).then(() => finish(null));
 				}, timeoutMs);
 
-				// Laden NACH der Handler-Registrierung.
+				// Load AFTER the event handlers are registered.
 				void win.loadURL(signinUrl).catch((e: unknown) => {
 					console.debug("Garmin Health Sync: M1 sign-in load failed:", e);
 				});
@@ -323,16 +323,16 @@ export class GarminApi {
 			}
 			console.debug(`Garmin Health Sync: M1 — service ticket captured via ${ticket.via}:`, ticket.value.slice(0, 14) + "…");
 
-			// Ticket → OAuth1 → OAuth2 (beweist M1 + M2 end-to-end gegen echte Garmin-Server).
-			// login-url = …/sso/embed, passend zum `service` des Tickets.
+			// Ticket → OAuth1 → OAuth2 (proves M1 + M2 end-to-end against real Garmin servers).
+			// login-url = …/sso/embed, matching the `service` of the ticket.
 			const consumer = await this.getConsumerCached();
 			const oauth1 = await getOAuth1(ticket.value, consumer, this.urls.domain, this.urls.ssoEmbed);
 			this.oauth1 = oauth1;
 			console.debug("Garmin Health Sync: OAuth1 token obtained (oauth_token:", oauth1.oauth_token.slice(0, 10) + "…)");
 			const oauth2 = await exchange(oauth1, consumer, this.urls.domain, { login: true });
 			this.oauth2 = oauth2;
-			this.displayName = "";          // bei (Re-)Login neu auflösen
-			this.authState.onLogin();        // frischer Login → ready, Backoff zurücksetzen
+			this.displayName = "";          // resolve fresh on (re-)login
+			this.authState.onLogin();        // fresh login → ready, reset backoff
 			console.debug("Garmin Health Sync: OAuth2 token obtained, expires_in:", oauth2.expires_in, "s");
 			return { ok: true, detail: `via=${ticket.via}; oauth1 ok; oauth2 ok; expires_in=${oauth2.expires_in}s` };
 		} catch (e: unknown) {
@@ -355,16 +355,16 @@ export class GarminApi {
 		this.activeLoginWindow = null;
 	}
 
-	/** Lädt die öffentlichen Consumer-Keys einmal und cacht sie. */
+	/** Loads the public consumer keys once and caches them. */
 	private async getConsumerCached(): Promise<Consumer> {
 		if (!this.consumer) this.consumer = await getConsumer();
 		return this.consumer;
 	}
 
-	/** Phase 7: stellt ein gültiges OAuth2-Access-Token sicher. Refresht es bei
-	 *  Bedarf SILENT via OAuth1 (reiner HTTPS-POST, kein BrowserWindow). Wirft bei
-	 *  fehlendem OAuth1 LoginRequiredError; bei 401/403 vom exchange GarminAuthError
-	 *  (→ needsUserLogin); transiente Fehler → temporarilyUnavailable + Backoff. */
+	/** Phase 7: ensures a valid OAuth2 access token. Refreshes it silently when
+	 *  needed via OAuth1 (plain HTTPS POST, no BrowserWindow). Throws LoginRequiredError
+	 *  if OAuth1 is missing; GarminAuthError on 401/403 from exchange
+	 *  (→ needsUserLogin); transient errors → temporarilyUnavailable + backoff. */
 	/** Centralizes the "OAuth1 grant is permanently dead" reaction (401/403): set the
 	 *  state to needsUserLogin, discard the tokens (isSessionValid becomes false) and
 	 *  signal a LoginRequiredError so callers show the re-login notice.
@@ -381,7 +381,7 @@ export class GarminApi {
 			this.failAuth(); // Review-B: go through failAuth uniformly (also clears oauth2)
 		}
 		const nowSeconds = Math.floor(Date.now() / 1000);
-		// 60s Puffer, damit ein knapp gültiges Token nicht mitten im Batch abläuft.
+		// 60s buffer so a token that is barely valid does not expire mid-batch.
 		if (this.oauth2 && this.oauth2.expires_at - 60 > nowSeconds) {
 			return this.oauth2;
 		}
@@ -397,13 +397,13 @@ export class GarminApi {
 			if (isGarminAuthError(e) && isAuthFailureStatus(e.status)) {
 				this.failAuth();
 			}
-			// Alles andere (Netzwerk/429/5xx/Timeout) ist transient → Backoff-Retry.
+			// Everything else (network/429/5xx/timeout) is transient → backoff retry.
 			this.authState.onTransientError();
 			throw e;
 		}
 	}
 
-	/** Bearer-GET gegen connectapi (ersetzt den Cookie-/Interceptor-Datenpfad). */
+	/** Bearer GET against connectapi (replaces the cookie/interceptor data path). */
 	private async apiGet(url: string, oauth2: OAuth2Token): Promise<{ status: number; data: unknown }> {
 		const res = await requestUrl({
 			url,
@@ -419,7 +419,7 @@ export class GarminApi {
 		return { status: res.status, data: ok ? res.json : null };
 	}
 
-	/** Holt den displayName (für die nutzerspezifischen Endpoints) aus socialProfile. */
+	/** Fetches the displayName (for user-specific endpoints) from socialProfile. */
 	private async ensureDisplayName(oauth2: OAuth2Token): Promise<string> {
 		if (this.displayName) return this.displayName;
 		const url = `${this.urls.apiBase}/userprofile-service/socialProfile`;
@@ -442,11 +442,11 @@ export class GarminApi {
 		return (electron.remote ?? electron).BrowserWindow;
 	}
 
-	// --- Data fetching (M3: Bearer gegen connectapi) ---
+	// --- Data fetching (M3: Bearer against connectapi) ---
 
-	/** Holt die benötigten Endpoints für ein Datum via Bearer gegen connectapi.
-	 *  Stellt vor dem Batch ein gültiges OAuth2 sicher (Phase 7) und refresht
-	 *  einmalig bei einem mid-batch-401/403. */
+	/** Fetches the required endpoints for a date via Bearer against connectapi.
+	 *  Ensures a valid OAuth2 before the batch (Phase 7) and refreshes
+	 *  once on a mid-batch 401/403. */
 	async fetchDataForDate(date: string, seq?: number): Promise<Record<string, unknown>> {
 		let oauth2 = await this.ensureValidOAuth2();
 
@@ -470,9 +470,9 @@ export class GarminApi {
 		const results = first.results;
 
 		if (first.authFailed) {
-			// Mid-batch-Auth-Fehler: einmal frisch refreshen und die fehlenden erneut holen.
+			// Mid-batch auth failure: refresh once and re-fetch the missing endpoints.
 			console.debug("Garmin Health Sync: mid-batch auth failure → refreshing OAuth2 once");
-			this.oauth2 = null; // erzwingt Refresh (wirft bei 401/403 → needsUserLogin)
+			this.oauth2 = null; // forces a refresh (throws on 401/403 → needsUserLogin)
 			oauth2 = await this.ensureValidOAuth2();
 			const missing = keys.filter(k => !(k in results));
 			const retry = await this.fetchEndpoints(missing, dn, date, oauth2);
@@ -492,8 +492,8 @@ export class GarminApi {
 		return results;
 	}
 
-	/** Ruft eine Endpoint-Liste parallel via Bearer ab. Liefert die transformierten
-	 *  Ergebnisse und ob ein Auth-Fehler (401/403) auftrat. */
+	/** Fetches a list of endpoints in parallel via Bearer. Returns the transformed
+	 *  results and whether an auth failure (401/403) occurred. */
 	private async fetchEndpoints(
 		keys: string[], dn: string, date: string, oauth2: OAuth2Token,
 	): Promise<{ results: Record<string, unknown>; authFailed: boolean }> {
@@ -512,7 +512,7 @@ export class GarminApi {
 				} else {
 					// F11: also covers the empty 200 body (Garmin occasionally returns
 					// 200 + null for missing daily data) — legitimate, but now logged.
-					console.debug(`Garmin Health Sync: endpoint ${key} → status ${status}${data == null ? " (leer)" : ""} (übersprungen)`);
+					console.debug(`Garmin Health Sync: endpoint ${key} → status ${status}${data == null ? " (empty)" : ""} (skipped)`);
 				}
 			} catch (e) {
 				console.debug(`Garmin Health Sync: endpoint ${key} fetch error:`, e);

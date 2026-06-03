@@ -1,22 +1,22 @@
 import { isAuthFailureStatus } from "../../errors";
 
-/** Auth-Zustände des Garmin-Providers. Ersetzt das binäre `autoSyncPaused` und
- *  verhindert den Kern-Bug „ein einzelner missglückter Refresh schaltet den
- *  Auto-Sync dauerhaft ab". Nur `needsUserLogin` pausiert dauerhaft. */
+/** Auth states of the Garmin provider. Replaces the binary `autoSyncPaused` and
+ *  prevents the core bug "a single failed refresh permanently disables auto-sync".
+ *  Only `needsUserLogin` pauses permanently. */
 export type AuthState =
-	| "unknown"                  // Startzustand, noch nicht geprüft
-	| "ready"                    // gültiges OAuth2 (oder per OAuth1 erneuerbar) — Auto-Sync läuft
-	| "refreshing"               // OAuth2 wird gerade via OAuth1 erneuert (transient)
-	| "temporarilyUnavailable"   // transienter Fehler (Netzwerk/429/5xx/leer) — Retry mit Backoff
-	| "needsUserLogin";          // OAuth1 tot/abgelehnt (401/403) — EINZIGER dauerhaft pausierende Zustand
+	| "unknown"                  // Initial state, not yet checked
+	| "ready"                    // Valid OAuth2 (or renewable via OAuth1) — auto-sync running
+	| "refreshing"               // OAuth2 is currently being renewed via OAuth1 (transient)
+	| "temporarilyUnavailable"   // Transient error (network/429/5xx/empty) — retry with Backoff
+	| "needsUserLogin";          // OAuth1 dead/rejected (401/403) — ONLY permanently pausing state
 
-// Backoff (bestätigt 2026-06-03): exponentiell 1min → 2 → 4 → 8 → 16 → 30 (Cap),
-// KEIN Hard-Max — der Auto-Sync bleibt grundsätzlich aktiv und versucht es weiter.
-const BACKOFF_BASE_MS = 60_000;      // 1 Minute
-const BACKOFF_CAP_MS = 30 * 60_000;  // 30 Minuten
+// Backoff (confirmed 2026-06-03): exponential 1min → 2 → 4 → 8 → 16 → 30 (cap),
+// NO hard max — auto-sync remains fundamentally active and keeps retrying.
+const BACKOFF_BASE_MS = 60_000;      // 1 minute
+const BACKOFF_CAP_MS = 30 * 60_000;  // 30 minutes
 
-/** Kleine Zustandsmaschine für die Auth-/Refresh-Logik. `now` ist injizierbar
- *  (Default `Date.now()`), damit die Übergänge testbar bleiben. */
+/** Small state machine for auth/refresh logic. `now` is injectable
+ *  (default `Date.now()`) so that transitions remain testable. */
 export class AuthStateMachine {
 	private _state: AuthState = "unknown";
 	private transientCount = 0;
@@ -26,53 +26,53 @@ export class AuthStateMachine {
 		return this._state;
 	}
 
-	/** Frühester Zeitpunkt (epoch ms) für den nächsten Auto-Sync-Versuch im
-	 *  Zustand `temporarilyUnavailable`. 0, wenn kein Backoff aktiv. */
+	/** Earliest point in time (epoch ms) for the next auto-sync attempt in
+	 *  state `temporarilyUnavailable`. 0 if no Backoff is active. */
 	get nextRetryAt(): number {
 		return this._nextRetryAt;
 	}
 
-	/** Ein OAuth2-Refresh läuft gerade (transient). Blockt parallele Batches,
-	 *  bis er per onSuccess/onTransientError/onAuthError aufgelöst wird. */
+	/** An OAuth2 refresh is currently running (transient). Blocks parallel batches
+	 *  until it is resolved via onSuccess/onTransientError/onAuthError. */
 	beginRefresh(): void {
-		if (this._state === "needsUserLogin") return; // erst neu anmelden
+		if (this._state === "needsUserLogin") return; // must re-login first
 		this._state = "refreshing";
 	}
 
-	/** Erfolgreicher Refresh oder erfolgreicher Datenabruf → wieder einsatzbereit;
-	 *  Backoff zurücksetzen. */
+	/** Successful refresh or successful data fetch → ready again;
+	 *  reset Backoff. */
 	onSuccess(): void {
 		this._state = "ready";
 		this.transientCount = 0;
 		this._nextRetryAt = 0;
 	}
 
-	/** Frischer interaktiver Login durch den Nutzer → Reset aus jedem Zustand
-	 *  (auch aus needsUserLogin heraus). */
+	/** Fresh interactive login by the user → reset from any state
+	 *  (including from needsUserLogin). */
 	onLogin(): void {
 		this.onSuccess();
 	}
 
-	/** Transienter Fehler (Netzwerk/429/5xx/Timeout/leere Antwort): NICHT
-	 *  ausloggen, Backoff hochzählen, Auto-Sync grundsätzlich aktiv lassen. */
+	/** Transient error (network/429/5xx/timeout/empty response): do NOT
+	 *  log out, increment Backoff, keep auto-sync fundamentally active. */
 	onTransientError(now = Date.now()): void {
-		if (this._state === "needsUserLogin") return; // dauerhafter Zustand hat Vorrang
+		if (this._state === "needsUserLogin") return; // permanent state takes priority
 		this.transientCount++;
 		const delay = Math.min(BACKOFF_BASE_MS * 2 ** (this.transientCount - 1), BACKOFF_CAP_MS);
 		this._nextRetryAt = now + delay;
 		this._state = "temporarilyUnavailable";
 	}
 
-	/** Auth-Fehler (401/403 vom exchange = OAuth1 endgültig tot): EINZIGER
-	 *  Zustand, der den Auto-Sync dauerhaft pausiert. */
+	/** Auth error (401/403 from exchange = OAuth1 permanently dead): ONLY
+	 *  state that permanently pauses auto-sync. */
 	onAuthError(): void {
 		this._state = "needsUserLogin";
 		this._nextRetryAt = 0;
 	}
 
-	/** Klassifiziert einen HTTP-Status und führt den passenden Übergang aus.
-	 *  Hält die „401/403 → needsUserLogin, sonst → transient"-Regel an EINER
-	 *  Stelle (inkl. des 403-Nebenbefunds). */
+	/** Classifies an HTTP status and executes the appropriate transition.
+	 *  Keeps the "401/403 → needsUserLogin, else → transient" rule in ONE
+	 *  place (incl. the 403 side-finding). */
 	onHttpError(status: number, now = Date.now()): void {
 		if (isAuthFailureStatus(status)) {
 			this.onAuthError();
@@ -81,15 +81,15 @@ export class AuthStateMachine {
 		}
 	}
 
-	/** Darf der Auto-Sync jetzt einen Versuch starten? */
+	/** Is auto-sync allowed to start an attempt right now? */
 	shouldAttemptSync(now = Date.now()): boolean {
 		switch (this._state) {
 			case "needsUserLogin":
-				return false; // dauerhaft pausiert bis zum Re-Login
+				return false; // permanently paused until re-login
 			case "temporarilyUnavailable":
-				return now >= this._nextRetryAt; // erst nach Ablauf des Backoffs
+				return now >= this._nextRetryAt; // only after the Backoff has elapsed
 			case "refreshing":
-				return false; // ein Refresh läuft bereits — keinen zweiten Batch starten
+				return false; // a refresh is already running — do not start a second batch
 			case "unknown":
 			case "ready":
 			default:
@@ -97,13 +97,13 @@ export class AuthStateMachine {
 		}
 	}
 
-	/** Pausiert der Auto-Sync dauerhaft (nur needsUserLogin)? Für UI/Settings,
-	 *  ersetzt die Bedeutung des alten `autoSyncPaused`-Flags. */
+	/** Is auto-sync permanently paused (only needsUserLogin)? For UI/settings,
+	 *  replaces the meaning of the old `autoSyncPaused` flag. */
 	isPausedForLogin(): boolean {
 		return this._state === "needsUserLogin";
 	}
 
-	/** Vollständiger Reset (z.B. nach Logout). */
+	/** Full reset (e.g. after logout). */
 	reset(): void {
 		this._state = "unknown";
 		this.transientCount = 0;

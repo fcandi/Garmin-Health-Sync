@@ -21,8 +21,8 @@ export interface HealthSyncSettings {
 	enabledMetrics: Record<string, boolean>;
 	lastSyncTimes: Record<string, number>; // Date → last sync timestamp (epoch ms)
 	garminSession: string;
-	garminOAuth1: string; // JSON-serialisierter OAuth1Token (langlebig, ~1 Jahr)
-	garminOAuth2: string; // JSON-serialisierter OAuth2Token (kurzlebig)
+	garminOAuth1: string; // JSON-serialized OAuth1Token (long-lived, ~1 year)
+	garminOAuth2: string; // JSON-serialized OAuth2Token (short-lived)
 	language: string;
 	autoSync: boolean;
 	writeTrainings: boolean; // Machine-readable training data in frontmatter
@@ -109,9 +109,9 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					this.display();
 				}));
 
-		// Garmin Login. Bei needsUserLogin werden die OAuth-Token verworfen → erscheint
-		// als "nicht verbunden"; transiente Fehler lassen die Token stehen und werden
-		// automatisch mit Backoff erneut versucht (kein eigener UI-Zustand nötig).
+		// Garmin Login. On needsUserLogin the OAuth tokens are discarded → appears
+		// as "not connected"; transient errors leave the tokens in place and are
+		// automatically retried with backoff (no separate UI state needed).
 		const hasSavedSession = this.plugin.isSessionValid();
 		const garminStatus = hasSavedSession
 			? t("settingsGarminLoggedIn", lang)

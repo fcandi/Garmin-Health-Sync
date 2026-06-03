@@ -205,7 +205,7 @@ function extractFrontmatter(content: string): FrontmatterParse {
 		}
 	}
 	if (closingIdx === -1) {
-		return { kind: "invalid", reason: "kein schließender --- Marker gefunden" };
+		return { kind: "invalid", reason: "no closing --- marker found" };
 	}
 
 	const yamlText = lines.slice(1, closingIdx).join(lineEnding);
@@ -214,7 +214,7 @@ function extractFrontmatter(content: string): FrontmatterParse {
 		data = parseYaml(yamlText);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
-		return { kind: "invalid", reason: `YAML-Parse-Fehler: ${msg}` };
+		return { kind: "invalid", reason: `YAML parse error: ${msg}` };
 	}
 
 	// Empty frontmatter (`---\n---`) → parseYaml returns null. Treat as empty object.
@@ -230,7 +230,7 @@ function extractFrontmatter(content: string): FrontmatterParse {
 	}
 
 	if (typeof data !== "object" || Array.isArray(data)) {
-		return { kind: "invalid", reason: "Frontmatter ist kein YAML-Object (z.B. Liste oder Skalar)" };
+		return { kind: "invalid", reason: "Frontmatter is not a YAML object (e.g. list or scalar)" };
 	}
 
 	const body = lines.slice(closingIdx + 1).join(lineEnding);

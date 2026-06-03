@@ -1,22 +1,22 @@
 /**
- * Garmin OAuth1/OAuth2 Token-Layer (M2 der OAuth-Migration).
+ * Garmin OAuth1/OAuth2 token layer (M2 of the OAuth migration).
  *
- * Kapselt den vollständigen OAuth1-signierten Austausch mit den Garmin-APIs:
- *   - RFC-3986-Encoding und HMAC-SHA1-Signatur (WebCrypto, async)
- *   - Consumer-Keys laden (öffentlicher S3-Endpunkt)
- *   - Service-Ticket → langlebiges OAuth1-Token (preauthorized-Endpunkt)
- *   - OAuth1-Token → kurzlebiges OAuth2-Token (exchange-Endpunkt)
+ * Encapsulates the complete OAuth1-signed exchange with the Garmin APIs:
+ *   - RFC-3986-Encoding and HMAC-SHA1 signature (WebCrypto, async)
+ *   - Loading consumer keys (public S3 endpoint)
+ *   - Service ticket → long-lived OAuth1 token (preauthorized endpoint)
+ *   - OAuth1 token → short-lived OAuth2 token (exchange endpoint)
  *
- * Bewusste Einschränkungen:
- *   - Kein Node-crypto, kein fetch → WebCrypto + Obsidians requestUrl (mobile-tauglich, CORS-frei)
- *   - Kein process.env → domain kommt als Parameter
- *   - requestUrl wird mit throw:false aufgerufen; HTTP-Status wird explizit ausgewertet
+ * Deliberate constraints:
+ *   - No Node-crypto, no fetch → WebCrypto + Obsidian's requestUrl (mobile-compatible, CORS-free)
+ *   - No process.env → domain is passed as a parameter
+ *   - requestUrl is called with throw:false; HTTP status is evaluated explicitly
  */
 
 import { requestUrl } from "obsidian";
 import { GarminAuthError } from "../../errors";
 
-// URL des öffentlichen Consumer-Key-Endpunkts (garth-Stil, kein Auth nötig)
+// URL of the public consumer key endpoint (garth-style, no auth required)
 const CONSUMER_URL = "https://thegarth.s3.amazonaws.com/oauth_consumer.json";
 
 // User-Agent for all OAuth calls (Android client, expected by Garmin).
@@ -25,7 +25,7 @@ const CONSUMER_URL = "https://thegarth.s3.amazonaws.com/oauth_consumer.json";
 export const OAUTH_UA = "com.garmin.android.apps.connectmobile";
 
 // ---------------------------------------------------------------------------
-// Exportierte Interfaces
+// Exported interfaces
 // ---------------------------------------------------------------------------
 
 export interface Consumer {
@@ -44,9 +44,9 @@ export interface OAuth2Token {
 	refresh_token: string;
 	expires_in: number;
 	refresh_token_expires_in?: number;
-	/** Ablaufzeitpunkt in Epoch-Sekunden; von withExpirations gesetzt */
+	/** Expiry timestamp in epoch seconds; set by withExpirations */
 	expires_at: number;
-	/** Ablaufzeitpunkt des Refresh-Tokens in Epoch-Sekunden; optional */
+	/** Expiry timestamp of the refresh token in epoch seconds; optional */
 	refresh_token_expires_at?: number;
 	token_type?: string;
 	scope?: string;
@@ -57,8 +57,8 @@ export interface OAuth2Token {
 // ---------------------------------------------------------------------------
 
 /**
- * Percent-encodiert einen String nach RFC 3986.
- * encodeURIComponent lässt `! * ' ( )` uncodiert — diese werden nachträglich ersetzt.
+ * Percent-encodes a string according to RFC 3986.
+ * encodeURIComponent leaves `! * ' ( )` unencoded — these are replaced afterwards.
  */
 export function rfc3986(s: string): string {
 	return encodeURIComponent(s).replace(
@@ -68,16 +68,16 @@ export function rfc3986(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth1-HMAC-SHA1-Signatur (WebCrypto, async)
+// OAuth1 HMAC-SHA1 signature (WebCrypto, async)
 // ---------------------------------------------------------------------------
 
 /**
- * Erzeugt den OAuth1-Authorization-Header (HMAC-SHA1).
+ * Builds the OAuth1 Authorization header (HMAC-SHA1).
  *
- * Signaturmechanik (bit-identisch zum verifizierten Prototyp):
- *   1. Alle Parameter (Query + Body + oauth_*) nach Schlüssel sortieren
- *   2. Basis-URL ohne Query zusammensetzen
- *   3. Base-String: METHOD & rfc3986(baseUrl) & rfc3986(paramString)
+ * Signature mechanics (bit-identical to the verified prototype):
+ *   1. Sort all parameters (Query + Body + oauth_*) by key
+ *   2. Assemble the base URL without query string
+ *   3. Base string: METHOD & rfc3986(baseUrl) & rfc3986(paramString)
  *   4. signing_key = rfc3986(consumer_secret) & rfc3986(token_secret || "")
  *   5. HMAC-SHA1 via WebCrypto → base64
  */
@@ -90,14 +90,14 @@ export async function oauth1Header(
 ): Promise<string> {
 	const u = new URL(url);
 
-	// Nonce aus 16 zufälligen Bytes (hex-kodiert)
+	// Nonce from 16 random bytes (hex-encoded)
 	const nonceBytes = new Uint8Array(16);
 	crypto.getRandomValues(nonceBytes);
 	const nonce = Array.from(nonceBytes)
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
 
-	// OAuth-Pflichtparameter
+	// Required OAuth parameters
 	const oauth: Record<string, string> = {
 		oauth_consumer_key: consumer.consumer_key,
 		oauth_nonce: nonce,
@@ -109,7 +109,7 @@ export async function oauth1Header(
 		oauth["oauth_token"] = token.oauth_token;
 	}
 
-	// Alle Parameter zusammenführen: Query + Body + oauth_*
+	// Merge all parameters: Query + Body + oauth_*
 	const all: Record<string, string> = {};
 	for (const [k, v] of u.searchParams) {
 		all[k] = v;
@@ -123,27 +123,27 @@ export async function oauth1Header(
 		if (val !== undefined) all[k] = val;
 	}
 
-	// Parameter-String: sortiert, RFC-3986-codiert
+	// Parameter string: sorted, RFC-3986-encoded
 	const paramString = Object.keys(all)
 		.sort()
 		.map((k) => `${rfc3986(k)}=${rfc3986(all[k] ?? "")}`)
 		.join("&");
 
-	// Basis-URL ohne Query/Fragment
+	// Base URL without query string or fragment
 	const baseUrl = `${u.protocol}//${u.host}${u.pathname}`;
 
-	// Signatur-Basis-String
+	// Signature base string
 	const baseString = [
 		method.toUpperCase(),
 		rfc3986(baseUrl),
 		rfc3986(paramString),
 	].join("&");
 
-	// Signing-Key: consumer_secret & token_secret (leer falls kein Token)
+	// Signing key: consumer_secret & token_secret (empty if no token present)
 	const signingKey =
 		`${rfc3986(consumer.consumer_secret)}&${rfc3986(token?.oauth_token_secret ?? "")}`;
 
-	// HMAC-SHA1 via WebCrypto (async, mobile-tauglich)
+	// HMAC-SHA1 via WebCrypto (async, mobile-compatible)
 	const cryptoKey = await crypto.subtle.importKey(
 		"raw",
 		new TextEncoder().encode(signingKey),
@@ -162,7 +162,7 @@ export async function oauth1Header(
 		String.fromCharCode(...new Uint8Array(sigBuffer)),
 	);
 
-	// Authorization-Header zusammensetzen (sortiert)
+	// Assemble the Authorization header (sorted)
 	return (
 		"OAuth " +
 		Object.keys(oauth)
@@ -173,40 +173,40 @@ export async function oauth1Header(
 }
 
 // ---------------------------------------------------------------------------
-// Consumer-Keys laden
+// Loading consumer keys
 // ---------------------------------------------------------------------------
 
 /**
- * Lädt die öffentlichen Consumer-Keys vom Garmin-S3-Endpunkt.
- * Kein Auth nötig; öffentlich zugänglich.
+ * Fetches the public consumer keys from the Garmin S3 endpoint.
+ * No auth required; publicly accessible.
  */
 export async function getConsumer(): Promise<Consumer> {
 	let response;
 	try {
 		response = await requestUrl({ url: CONSUMER_URL, throw: false });
 	} catch (e: unknown) {
-		// Netzwerkfehler (DNS, Timeout etc.) → GarminAuthError mit Status 0
+		// Network error (DNS, timeout, etc.) → GarminAuthError with status 0
 		const msg = e instanceof Error ? e.message : String(e);
-		throw new GarminAuthError(0, `Consumer-Keys laden fehlgeschlagen (Netzwerk): ${msg}`);
+		throw new GarminAuthError(0, `Loading consumer keys failed (network): ${msg}`);
 	}
 	if (response.status < 200 || response.status >= 300) {
 		throw new GarminAuthError(
 			response.status,
-			`Consumer-Keys laden fehlgeschlagen: HTTP ${response.status}`,
+			`Loading consumer keys failed: HTTP ${response.status}`,
 		);
 	}
 	return response.json as Consumer;
 }
 
 // ---------------------------------------------------------------------------
-// Ablaufzeiten setzen
+// Setting expiry times
 // ---------------------------------------------------------------------------
 
 /**
- * Setzt expires_at und ggf. refresh_token_expires_at anhand von nowSeconds.
+ * Sets expires_at and optionally refresh_token_expires_at based on nowSeconds.
  *
- * nowSeconds als Parameter übergeben (Testbarkeit); Aufrufer darf
- * Math.floor(Date.now() / 1000) verwenden.
+ * nowSeconds is passed as a parameter (for testability); the caller should use
+ * Math.floor(Date.now() / 1000).
  */
 export function withExpirations(token: OAuth2Token, nowSeconds: number): OAuth2Token {
 	// Return a copy instead of mutating in place: calling this again on the same
@@ -219,14 +219,14 @@ export function withExpirations(token: OAuth2Token, nowSeconds: number): OAuth2T
 }
 
 // ---------------------------------------------------------------------------
-// Service-Ticket → OAuth1-Token
+// Service ticket → OAuth1 token
 // ---------------------------------------------------------------------------
 
 /**
- * Tauscht ein SSO-Service-Ticket gegen ein langlebiges OAuth1-Token.
+ * Exchanges an SSO service ticket for a long-lived OAuth1 token.
  *
- * Endpunkt: GET connectapi.<domain>/oauth-service/oauth/preauthorized
- * Antwort: x-www-form-urlencoded → OAuth1Token
+ * Endpoint: GET connectapi.<domain>/oauth-service/oauth/preauthorized
+ * Response: x-www-form-urlencoded → OAuth1Token
  */
 export async function getOAuth1(
 	ticket: string,
@@ -234,8 +234,8 @@ export async function getOAuth1(
 	domain: string,
 	loginUrl?: string,
 ): Promise<OAuth1Token> {
-	// login-url MUSS zum `service` passen, für den das Ticket ausgestellt wurde.
-	// Web-Embed-Flow (garth-Stil, BrowserWindow): https://sso.<domain>/sso/embed.
+	// login-url MUST match the `service` for which the ticket was issued.
+	// Web embed flow (garth-style, BrowserWindow): https://sso.<domain>/sso/embed.
 	const effectiveLoginUrl = loginUrl ?? `https://sso.${domain}/sso/embed`;
 	const url =
 		`https://connectapi.${domain}/oauth-service/oauth/preauthorized` +
@@ -243,7 +243,7 @@ export async function getOAuth1(
 		`&login-url=${encodeURIComponent(effectiveLoginUrl)}` +
 		`&accepts-mfa-tokens=true`;
 
-	// OAuth1-Header für GET ohne Token (nur Consumer)
+	// OAuth1 header for GET without a token (consumer only)
 	const authHeader = await oauth1Header("GET", url, null, consumer, null);
 
 	let response;
@@ -259,17 +259,17 @@ export async function getOAuth1(
 		});
 	} catch (e: unknown) {
 		const msg = e instanceof Error ? e.message : String(e);
-		throw new GarminAuthError(0, `preauthorized fehlgeschlagen (Netzwerk): ${msg}`);
+		throw new GarminAuthError(0, `preauthorized failed (network): ${msg}`);
 	}
 
 	if (response.status < 200 || response.status >= 300) {
 		throw new GarminAuthError(
 			response.status,
-			`preauthorized fehlgeschlagen: HTTP ${response.status}`,
+			`preauthorized failed: HTTP ${response.status}`,
 		);
 	}
 
-	// Antwort ist x-www-form-urlencoded
+	// Response is x-www-form-urlencoded
 	const parsed = new URLSearchParams(response.text);
 	const oauth_token = parsed.get("oauth_token");
 	const oauth_token_secret = parsed.get("oauth_token_secret");
@@ -277,7 +277,7 @@ export async function getOAuth1(
 	if (!oauth_token || !oauth_token_secret) {
 		throw new GarminAuthError(
 			response.status,
-			"preauthorized: oauth_token oder oauth_token_secret fehlt in der Antwort",
+			"preauthorized: oauth_token or oauth_token_secret missing from response",
 		);
 	}
 
@@ -288,17 +288,17 @@ export async function getOAuth1(
 }
 
 // ---------------------------------------------------------------------------
-// OAuth1-Token → OAuth2-Token (Silent-Refresh-Kern)
+// OAuth1 token → OAuth2 token (silent-refresh core)
 // ---------------------------------------------------------------------------
 
 /**
- * Tauscht ein OAuth1-Token gegen ein kurzlebiges OAuth2-Access-Token.
+ * Exchanges an OAuth1 token for a short-lived OAuth2 access token.
  *
- * Endpunkt: POST connectapi.<domain>/oauth-service/oauth/exchange/user/2.0
- * Body: x-www-form-urlencoded (identisch mit dem signierten Body)
+ * Endpoint: POST connectapi.<domain>/oauth-service/oauth/exchange/user/2.0
+ * Body: x-www-form-urlencoded (identical to the signed body)
  *
- * opts.login = true → fügt audience=GARMIN_CONNECT_MOBILE_ANDROID_DI hinzu
- *   (nur beim ersten Login nötig; Silent-Refresh ohne diesen Parameter)
+ * opts.login = true → appends audience=GARMIN_CONNECT_MOBILE_ANDROID_DI
+ *   (only needed on the initial login; silent refresh omits this parameter)
  */
 export async function exchange(
 	oauth1: OAuth1Token,
@@ -308,7 +308,7 @@ export async function exchange(
 ): Promise<OAuth2Token> {
 	const url = `https://connectapi.${domain}/oauth-service/oauth/exchange/user/2.0`;
 
-	// Body-Parameter aufbauen (müssen signiert UND gesendet werden — gleicher Inhalt!)
+	// Build body parameters (must be signed AND sent — identical content!)
 	const body: Record<string, string> = {};
 	if (opts?.login === true) {
 		body["audience"] = "GARMIN_CONNECT_MOBILE_ANDROID_DI";
@@ -320,10 +320,10 @@ export async function exchange(
 		}
 	}
 
-	// OAuth1-Header für POST MIT Token und Body-Parametern
+	// OAuth1 header for POST with token and body parameters
 	const authHeader = await oauth1Header("POST", url, body, consumer, oauth1);
 
-	// Body als x-www-form-urlencoded-String (identisch mit dem signierten Inhalt)
+	// Body as x-www-form-urlencoded string (identical to the signed content)
 	const bodyString = new URLSearchParams(body).toString();
 
 	let response;
@@ -341,13 +341,13 @@ export async function exchange(
 		});
 	} catch (e: unknown) {
 		const msg = e instanceof Error ? e.message : String(e);
-		throw new GarminAuthError(0, `exchange fehlgeschlagen (Netzwerk): ${msg}`);
+		throw new GarminAuthError(0, `exchange failed (network): ${msg}`);
 	}
 
 	if (response.status < 200 || response.status >= 300) {
 		throw new GarminAuthError(
 			response.status,
-			`exchange fehlgeschlagen: HTTP ${response.status}`,
+			`exchange failed: HTTP ${response.status}`,
 		);
 	}
 

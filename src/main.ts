@@ -99,9 +99,9 @@ export default class HealthSyncPlugin extends Plugin {
 	private async tryAutoSync(): Promise<void> {
 		if (!this.settings.autoSync) return;
 		if (this.autoSyncRunning) return;
-		// Phase 7: Die State-Machine entscheidet. needsUserLogin pausiert dauerhaft,
-		// temporarilyUnavailable nur bis zum Ablauf des Backoffs. Kein Cookie-Probe
-		// mehr — der OAuth2-Refresh passiert silent in fetchDataForDate.
+		// Phase 7: The state machine decides. needsUserLogin pauses permanently,
+		// temporarilyUnavailable only until the backoff expires. No cookie probe
+		// anymore — the OAuth2 refresh happens silently in fetchDataForDate.
 		if (!this.garminProvider.shouldAttemptSync()) return;
 
 		const now = Date.now();
@@ -211,14 +211,14 @@ export default class HealthSyncPlugin extends Plugin {
 				console.debug(`Garmin Health Sync: Auto-sync done — ${synced}/${datesToSync.length} days synced`);
 			}
 		} catch (error) {
-			// Token evtl. refresht/gelöscht → persistieren. Der dauerhafte vs. transiente
-			// Zustand steckt in der State-Machine (provider.getAuthState()).
+			// Token may have been refreshed/invalidated → persist. The permanent vs. transient
+			// state is tracked by the state machine (provider.getAuthState()).
 			this.saveTokens();
 			await this.saveSettings();
 			if (isLoginRequiredError(error) || this.garminProvider.getAuthState() === "needsUserLogin") {
 				this.showGarminLoginRequiredNotice("sync hit login_required");
 			} else {
-				// Transienter Fehler: temporarilyUnavailable + Backoff, NICHT dauerhaft pausieren.
+				// Transient error: temporarilyUnavailable + backoff, do NOT pause permanently.
 				console.debug("Garmin Health Sync: Auto-sync transient failure — will retry with backoff", error);
 			}
 		}
@@ -269,7 +269,7 @@ export default class HealthSyncPlugin extends Plugin {
 				this.saveTokens();
 				await this.saveSettings();
 				new Notice(t("noticeLoginSuccess", lang));
-				// Frischer Login → State-Machine ist ready; sofort einen Sync anstoßen.
+				// Fresh login → state machine is ready; trigger a sync immediately.
 				this.lastAutoSyncAttempt = 0;
 				this.lastLoginNoticeAt = 0; // reset throttle: report future errors immediately
 				void this.tryAutoSync();
@@ -370,9 +370,9 @@ export default class HealthSyncPlugin extends Plugin {
 		this.settings.garminOAuth2 = oauth2 ? JSON.stringify(oauth2) : "";
 	}
 
-	/** M6: Bestandsnutzer mit alter Cookie-Session (aber ohne OAuth1) einmalig zum
-	 *  Neu-Anmelden auffordern und das Legacy-Feld leeren, damit die Notice nicht
-	 *  erneut erscheint. Der Re-Login läuft dann über den neuen OAuth-Flow. */
+	/** M6: Prompt existing users with a legacy cookie session (but no OAuth1) to
+	 *  log in again once, and clear the legacy field so the notice does not
+	 *  reappear. The re-login then goes through the new OAuth flow. */
 	private async migrateLegacySession(): Promise<void> {
 		if (this.settings.garminSession && !this.settings.garminOAuth1) {
 			new Notice(t("noticeMigrationReloginRequired", this.settings.language), 0);

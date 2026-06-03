@@ -45,29 +45,29 @@ export class GarminProvider implements HealthProvider {
 		return this.api.isSessionValid();
 	}
 
-	/** Interaktiver OAuth-Login im BrowserWindow (Ticket → OAuth1 → OAuth2). */
+	/** Interactive OAuth login via BrowserWindow (ticket → OAuth1 → OAuth2). */
 	async authenticate(): Promise<boolean> {
 		const res = await this.api.loginViaOAuth();
 		if (!res.ok) console.debug("Garmin Health Sync: OAuth login failed —", res.detail);
 		return res.ok;
 	}
 
-	/** Persistierte OAuth-Token setzen (Restore beim Start). */
+	/** Set persisted OAuth tokens (restore on startup). */
 	setTokens(oauth1: OAuth1Token | null, oauth2: OAuth2Token | null): void {
 		this.api.setTokens(oauth1, oauth2);
 	}
 
-	/** Aktuelle OAuth-Token für die Persistenz. */
+	/** Current OAuth tokens for persistence. */
 	getTokens(): { oauth1: OAuth1Token | null; oauth2: OAuth2Token | null } {
 		return this.api.getTokens();
 	}
 
-	/** Auth-Zustand (Phase 7) — needsUserLogin = dauerhaft pausiert. */
+	/** Auth state (Phase 7) — needsUserLogin = permanently paused. */
 	getAuthState(): AuthState {
 		return this.api.getAuthState();
 	}
 
-	/** Darf der Auto-Sync jetzt einen Versuch starten? */
+	/** Is auto-sync allowed to attempt a run right now? */
 	shouldAttemptSync(): boolean {
 		return this.api.shouldAttemptSync();
 	}
@@ -79,9 +79,9 @@ export class GarminProvider implements HealthProvider {
 	}
 
 	async fetchData(date: string, enabledMetrics: string[]): Promise<HealthData> {
-		// OAuth: kein BrowserWindow für den Datenabruf nötig. Fehlt das langlebige
-		// OAuth1-Token, ist ein interaktiver Login erforderlich. Der OAuth2-Refresh
-		// passiert silent in fetchDataForDate (Phase 7).
+		// OAuth: no BrowserWindow needed for data fetching. If the long-lived
+		// OAuth1 token is missing, an interactive login is required. The OAuth2 refresh
+		// happens silently in fetchDataForDate (Phase 7).
 		if (!this.api.isSessionValid()) {
 			throw new LoginRequiredError();
 		}
