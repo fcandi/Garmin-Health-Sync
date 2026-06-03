@@ -19,9 +19,9 @@ import { GarminAuthError } from "../../errors";
 // URL des öffentlichen Consumer-Key-Endpunkts (garth-Stil, kein Auth nötig)
 const CONSUMER_URL = "https://thegarth.s3.amazonaws.com/oauth_consumer.json";
 
-// User-Agent für alle OAuth-Aufrufe (Android-Client, Garmin-Erwartung).
-// Exportiert, damit garmin-api.ts denselben String für die Bearer-Aufrufe nutzt
-// (single source of truth statt doppelter Konstante).
+// User-Agent for all OAuth calls (Android client, expected by Garmin).
+// Exported so garmin-api.ts uses the same string for the Bearer calls
+// (single source of truth instead of a duplicated constant).
 export const OAUTH_UA = "com.garmin.android.apps.connectmobile";
 
 // ---------------------------------------------------------------------------
@@ -209,8 +209,8 @@ export async function getConsumer(): Promise<Consumer> {
  * Math.floor(Date.now() / 1000) verwenden.
  */
 export function withExpirations(token: OAuth2Token, nowSeconds: number): OAuth2Token {
-	// Kopie statt In-place-Mutation: ein erneuter Aufruf auf demselben Objekt
-	// würde sonst expires_at doppelt verlängern (now + bereits-absolutes expires_at).
+	// Return a copy instead of mutating in place: calling this again on the same
+	// object would otherwise double-extend expires_at (now + already-absolute expires_at).
 	const result: OAuth2Token = { ...token, expires_at: nowSeconds + token.expires_in };
 	if (token.refresh_token_expires_in !== undefined) {
 		result.refresh_token_expires_at = nowSeconds + token.refresh_token_expires_in;
@@ -312,9 +312,9 @@ export async function exchange(
 	const body: Record<string, string> = {};
 	if (opts?.login === true) {
 		body["audience"] = "GARMIN_CONNECT_MOBILE_ANDROID_DI";
-		// mfa_token NUR beim initialen Login mitsenden. Garmin behandelt es als
-		// einmalig; bei jedem Silent-Refresh mitgeschickt würde es 401/403
-		// provozieren und den Nutzer fälschlich ausloggen (garth-Semantik).
+		// Send mfa_token ONLY on the initial login. Garmin treats it as
+		// single-use; sending it on every silent refresh would trigger 401/403
+		// and wrongly log the user out (garth semantics).
 		if (oauth1.mfa_token) {
 			body["mfa_token"] = oauth1.mfa_token;
 		}

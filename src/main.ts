@@ -53,16 +53,16 @@ export default class HealthSyncPlugin extends Plugin {
 						try {
 							await this.syncManager.backfill(from, to, this.settings);
 						} catch (error) {
-							// F6: auch im Fehlerfall persistieren (s.u.) und bei totem
-							// Token die Re-Login-Notice zeigen, statt stillschweigend
-							// das tote OAuth1-Token auf Disk zu lassen.
+							// F6: persist even on error (see below) and show the re-login
+							// notice on a dead token, instead of silently leaving the dead
+							// OAuth1 token on disk.
 							if (isLoginRequiredError(error) || this.garminProvider.getAuthState() === "needsUserLogin") {
 								this.showGarminLoginRequiredNotice("backfill login_required");
 							} else {
 								console.debug("Garmin Health Sync: Backfill failed — transient", error);
 							}
 						} finally {
-							// Token könnten sich beim Backfill refresht/invalidiert haben → persistieren.
+							// Tokens may have been refreshed/invalidated during the backfill → persist.
 							this.saveTokens();
 							await this.saveSettings();
 						}
@@ -89,8 +89,8 @@ export default class HealthSyncPlugin extends Plugin {
 		);
 	}
 
-	/** F12: Beim Deaktivieren/Neuladen ein evtl. noch offenes Garmin-Login-Fenster
-	 *  schließen, statt es bis zum 120s-Timeout sichtbar offen zu lassen. */
+	/** F12: on disable/reload, close any still-open Garmin login window instead of
+	 *  leaving it visibly open until the 120s timeout. */
 	onunload(): void {
 		this.garminProvider?.closeActiveLogin();
 	}
@@ -271,7 +271,7 @@ export default class HealthSyncPlugin extends Plugin {
 				new Notice(t("noticeLoginSuccess", lang));
 				// Frischer Login → State-Machine ist ready; sofort einen Sync anstoßen.
 				this.lastAutoSyncAttempt = 0;
-				this.lastLoginNoticeAt = 0; // Throttle zurücksetzen: künftige Fehler sofort melden
+				this.lastLoginNoticeAt = 0; // reset throttle: report future errors immediately
 				void this.tryAutoSync();
 			} else {
 				new Notice(t("noticeLoginFailed", lang));
@@ -377,19 +377,19 @@ export default class HealthSyncPlugin extends Plugin {
 		if (this.settings.garminSession && !this.settings.garminOAuth1) {
 			new Notice(t("noticeMigrationReloginRequired", this.settings.language), 0);
 			this.settings.garminSession = "";
-			// F10: await, damit der Disk-Write abgeschlossen ist — sonst erscheint die
-			// Migrations-Notice bei einem Crash vor dem Write bei jedem Start erneut.
+			// F10: await so the disk write completes — otherwise the migration notice
+			// reappears on every start if a crash happens before the write.
 			await this.saveSettings();
 		}
 	}
 
 	private showGarminLoginRequiredNotice(reason: string): void {
 		console.debug(`Garmin Health Sync: Login required — ${reason}`);
-		// F3 + Review-A: zeitbasiertes Throttle statt binärem Guard. Verhindert eine
-		// neue Notice bei jeder Daily-Note-Öffnung, zeigt aber nach Ablauf des Fensters
-		// wieder eine — auch wenn der Nutzer die letzte manuell (X) geschlossen hat.
-		// Ein binärer `if (loginRequiredNotice) return` bliebe sonst für immer aktiv
-		// (Notice via X geschlossen → Referenz bleibt non-null → Auto-Sync stumm pausiert).
+		// F3 + Review-A: time-based throttle instead of a binary guard. Prevents a new
+		// notice on every daily-note open, but shows one again after the window elapses —
+		// even if the user closed the last one manually (X). A binary
+		// `if (loginRequiredNotice) return` would otherwise stay active forever
+		// (notice closed via X → reference stays non-null → auto-sync silently paused).
 		const now = Date.now();
 		if (now - this.lastLoginNoticeAt < LOGIN_NOTICE_THROTTLE_MS) return;
 		this.lastLoginNoticeAt = now;
@@ -423,8 +423,8 @@ export default class HealthSyncPlugin extends Plugin {
 		await this.loginViaBrowser();
 
 		if (this.garminProvider.isSessionValid() && this.garminProvider.getAuthState() !== "needsUserLogin") {
-			// Review-C: loginViaBrowser() hat bei Erfolg bereits einen Auto-Sync
-			// angestoßen — hier nur die Notice schließen, kein zweiter tryAutoSync.
+			// Review-C: loginViaBrowser() already triggered an auto-sync on success —
+			// just close the notice here, no second tryAutoSync.
 			notice.hide();
 			if (this.loginRequiredNotice === notice) this.loginRequiredNotice = null;
 			return;

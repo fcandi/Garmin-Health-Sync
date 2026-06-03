@@ -37,7 +37,7 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                  # Tags mit -beta.N automatisch als Pre-Release markieren.
+                  # Mark -beta.N tags as pre-releases automatically.
                   PRERELEASE=""
                   case "${{ github.ref_name }}" in
                       *-beta.*) PRERELEASE="--prerelease" ;;

@@ -131,7 +131,7 @@ export class GarminApi {
 	private requiredEndpoints: string[] | null = null;
 	private urls: RegionUrls = getRegionUrls("international");
 	private endpoints: Record<string, (displayName: string, date: string) => string> = getEndpoints(this.urls.apiBase);
-	// Concurrency-Guards: laufender Login (F9) und offenes Login-Fenster (F12).
+	// Concurrency guards: in-flight login (F9) and open login window (F12).
 	private loginPromise: Promise<{ ok: boolean; detail: string }> | null = null;
 	private activeLoginWindow: BrowserWindowType | null = null;
 
@@ -176,7 +176,7 @@ export class GarminApi {
 		this.oauth1 = null;
 		this.oauth2 = null;
 		this.displayName = "";
-		this.consumer = null;   // F13: Consumer-Keys nicht über einen Logout hinweg cachen
+		this.consumer = null;   // F13: do not cache consumer keys across a logout
 		this.authState.reset();
 		this.clearCache();
 	}
@@ -192,8 +192,8 @@ export class GarminApi {
 	// Dies ist der reguläre interaktive Login; OAuth2-Refresh + Datenabruf laufen
 	// danach silent ohne BrowserWindow (ensureValidOAuth2/fetchDataForDate).
 	async loginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
-		// F9: parallele Login-Aufrufe (Settings-Button + Notice-Button) teilen sich
-		// EIN Fenster/Resultat, statt zwei BrowserWindows mit Race um die Token zu öffnen.
+		// F9: concurrent login calls (settings button + notice button) share ONE
+		// window/result instead of opening two BrowserWindows racing for the tokens.
 		if (this.loginPromise) return this.loginPromise;
 		this.loginPromise = this.doLoginViaOAuth(opts);
 		try {
@@ -231,7 +231,7 @@ export class GarminApi {
 			title: "Garmin Connect Login",
 			webPreferences: { nodeIntegration: false, contextIsolation: false },
 		});
-		this.activeLoginWindow = win;   // F12: Handle für closeActiveLogin() bei Plugin-Unload
+		this.activeLoginWindow = win;   // F12: handle for closeActiveLogin() on plugin unload
 
 		// JS, das Seite/URL nach einem ST-Ticket durchsucht (kein Regex-Backslash → templatesicher).
 		const scrapeJs =
@@ -278,11 +278,11 @@ export class GarminApi {
 					void win.webContents.insertCSS("body { padding: 12px !important; }").catch(() => undefined);
 				});
 
-				// (b) HTML-Scrape als Backup, falls das Ticket nur im Seiten-HTML steht.
-				// Event-getrieben statt Dauer-Polling: läuft einmal pro fertig geladener
-				// Seite, statt jede Sekunde den Renderer-Thread mit einem synchronen
-				// remote-executeJavaScript (outerHTML-Serialisierung) zu blockieren —
-				// das löste die '[Violation] setInterval handler took …ms' aus.
+				// (b) HTML scrape as a fallback, in case the ticket is only in the page HTML.
+				// Event-driven instead of continuous polling: runs once per fully loaded
+				// page instead of blocking the renderer thread every second with a
+				// synchronous remote executeJavaScript (outerHTML serialization) —
+				// that caused the '[Violation] setInterval handler took …ms'.
 				const scrapeOnce = (): void => {
 					if (done || win.isDestroyed()) return;
 					void win.webContents.executeJavaScript(scrapeJs).then((tk: unknown) => {
@@ -296,8 +296,8 @@ export class GarminApi {
 					win.webContents.on(ev, scrapeOnce);
 				}
 
-				// Schließt der User das Login-Fenster, lösen wir sofort auf (früher
-				// erkannte das Poll via isDestroyed; ohne Poll braucht es den Event).
+				// If the user closes the login window, resolve immediately (the poll
+				// used to detect this via isDestroyed; without it we need the event).
 				win.on("closed", () => finish(null));
 
 				// Timeout: knappe Breadcrumb, auf welcher Seite der Login hängenblieb
@@ -346,8 +346,8 @@ export class GarminApi {
 		}
 	}
 
-	/** Schließt ein evtl. noch offenes Login-Fenster (F12: aufgerufen aus onunload,
-	 *  damit bei Plugin-Deaktivierung kein verwaistes BrowserWindow offen bleibt). */
+	/** Closes any still-open login window (F12: invoked from onunload so no orphaned
+	 *  BrowserWindow stays open when the plugin is disabled). */
 	closeActiveLogin(): void {
 		if (this.activeLoginWindow && !this.activeLoginWindow.isDestroyed()) {
 			try { this.activeLoginWindow.close(); } catch { /* ignore */ }
@@ -365,10 +365,10 @@ export class GarminApi {
 	 *  Bedarf SILENT via OAuth1 (reiner HTTPS-POST, kein BrowserWindow). Wirft bei
 	 *  fehlendem OAuth1 LoginRequiredError; bei 401/403 vom exchange GarminAuthError
 	 *  (→ needsUserLogin); transiente Fehler → temporarilyUnavailable + Backoff. */
-	/** Zentralisiert die „OAuth1-Grant endgültig tot" -Reaktion (401/403): State auf
-	 *  needsUserLogin, Token verwerfen (isSessionValid wird false) und als
-	 *  LoginRequiredError signalisieren, damit die Aufrufer die Re-Login-Notice zeigen.
-	 *  Wirft immer — Rückgabetyp `never`. */
+	/** Centralizes the "OAuth1 grant is permanently dead" reaction (401/403): set the
+	 *  state to needsUserLogin, discard the tokens (isSessionValid becomes false) and
+	 *  signal a LoginRequiredError so callers show the re-login notice.
+	 *  Always throws — return type `never`. */
 	private failAuth(): never {
 		this.authState.onAuthError();
 		this.oauth1 = null;
@@ -378,7 +378,7 @@ export class GarminApi {
 
 	private async ensureValidOAuth2(): Promise<OAuth2Token> {
 		if (!this.oauth1) {
-			this.failAuth(); // Review-B: einheitlich über failAuth (leert auch oauth2)
+			this.failAuth(); // Review-B: go through failAuth uniformly (also clears oauth2)
 		}
 		const nowSeconds = Math.floor(Date.now() / 1000);
 		// 60s Puffer, damit ein knapp gültiges Token nicht mitten im Batch abläuft.
@@ -450,9 +450,9 @@ export class GarminApi {
 	async fetchDataForDate(date: string, seq?: number): Promise<Record<string, unknown>> {
 		let oauth2 = await this.ensureValidOAuth2();
 
-		// F4: Der socialProfile-Call ist der erste API-Call nach dem Refresh. Ein
-		// Auth-/Transient-Fehler hier muss die State-Machine erreichen — sonst bleibt
-		// state=ready und der Fehler wird im Provider (warnOrRethrowAuth) verschluckt.
+		// F4: the socialProfile call is the first API call after the refresh. An
+		// auth/transient error here must reach the state machine — otherwise state
+		// stays ready and the error gets swallowed in the provider (warnOrRethrowAuth).
 		let dn: string;
 		try {
 			dn = await this.ensureDisplayName(oauth2);
@@ -477,14 +477,14 @@ export class GarminApi {
 			const missing = keys.filter(k => !(k in results));
 			const retry = await this.fetchEndpoints(missing, dn, date, oauth2);
 			Object.assign(results, retry.results);
-			// F5: Bleibt der Retry erneut bei 401/403, ist OAuth1 tot → needsUserLogin
-			// statt fälschlich onSuccess.
+			// F5: if the retry hits 401/403 again, OAuth1 is dead → needsUserLogin
+			// instead of a false onSuccess.
 			if (retry.authFailed) this.failAuth();
 		}
 
-		// F2: Erfolg nur vermelden, wenn dieser Lauf noch der aktuelle ist. Ein nach
-		// dem getCachedOrFetch-Timeout verwaister (oder von clearSession/einem neuen
-		// Lauf überholter) Fetch darf needsUserLogin nicht zu ready zurückdrehen.
+		// F2: only report success if this run is still the current one. A fetch
+		// orphaned after the getCachedOrFetch timeout (or superseded by clearSession/a
+		// newer run) must not flip needsUserLogin back to ready.
 		if (seq === undefined || seq === this.currentFetchSeq) {
 			this.authState.onSuccess();
 		}
@@ -510,8 +510,8 @@ export class GarminApi {
 					authFailed = true;
 					console.debug(`Garmin Health Sync: endpoint ${key} → auth failure ${status}`);
 				} else {
-					// F11: deckt auch den leeren 200-Body ab (Garmin liefert bei fehlenden
-					// Tagesdaten gelegentlich 200 + null) — legitim, aber jetzt protokolliert.
+					// F11: also covers the empty 200 body (Garmin occasionally returns
+					// 200 + null for missing daily data) — legitimate, but now logged.
 					console.debug(`Garmin Health Sync: endpoint ${key} → status ${status}${data == null ? " (leer)" : ""} (übersprungen)`);
 				}
 			} catch (e) {
@@ -598,8 +598,8 @@ export class GarminApi {
 	private cachedData: Record<string, unknown> = {};
 	private fetchPromise: Promise<Record<string, unknown>> | null = null;
 	private pendingDate = "";
-	private fetchSeq = 0;          // vergibt eindeutige IDs pro gestartetem Fetch
-	private currentFetchSeq = 0;   // ID des aktuell gültigen Fetches (F2/F8)
+	private fetchSeq = 0;          // hands out a unique id per started fetch
+	private currentFetchSeq = 0;   // id of the currently valid fetch (F2/F8)
 
 	private async getCachedOrFetch(date: string): Promise<Record<string, unknown>> {
 		if (this.cachedDate === date && Object.keys(this.cachedData).length > 0) {
@@ -623,9 +623,9 @@ export class GarminApi {
 
 		this.pendingDate = date;
 		this.fetchPromise = withTimeout.then(data => {
-			// F8: Nach clearCache/clearSession (oder einem neueren Lauf) NICHT mehr in
-			// den Cache schreiben — sonst re-befüllt ein verwaister Fetch den Cache mit
-			// Daten des ausgeloggten/vorherigen Nutzers.
+			// F8: after clearCache/clearSession (or a newer run) do NOT write to the
+			// cache anymore — otherwise an orphaned fetch repopulates the cache with
+			// data from the logged-out/previous user.
 			if (seq === this.currentFetchSeq) {
 				this.cachedData = data;
 				this.cachedDate = date;
@@ -646,8 +646,8 @@ export class GarminApi {
 
 	/** Clear the cache (e.g. after sync) */
 	clearCache(): void {
-		// Invalidiert laufende Fetches (F2/F8): deren seq != currentFetchSeq, ihre
-		// onSuccess-/Cache-Schreibeffekte greifen danach nicht mehr.
+		// Invalidates running fetches (F2/F8): their seq != currentFetchSeq, so their
+		// onSuccess/cache-write effects no longer take hold afterwards.
 		this.currentFetchSeq = ++this.fetchSeq;
 		this.cachedDate = "";
 		this.cachedData = {};
