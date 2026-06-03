@@ -4,6 +4,7 @@ on:
     push:
         tags:
             - "[0-9]+.[0-9]+.[0-9]+"
+            - "[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
 
 jobs:
     release:
@@ -35,4 +36,11 @@ jobs:
             - name: Create release and upload assets
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: gh release create "${{ github.ref_name }}" main.js manifest.json styles.css --title "${{ github.ref_name }}" --notes-file CHANGELOG.md
+              run: |
+                  # Tags mit -beta.N automatisch als Pre-Release markieren.
+                  PRERELEASE=""
+                  case "${{ github.ref_name }}" in
+                      *-beta.*) PRERELEASE="--prerelease" ;;
+                  esac
+                  gh release create "${{ github.ref_name }}" main.js manifest.json styles.css \
+                      --title "${{ github.ref_name }}" --notes-file CHANGELOG.md $PRERELEASE
