@@ -70,5 +70,6 @@ export default tseslint.config(
 		"version-bump.mjs",
 		"versions.json",
 		"main.js",
+		"tools", // Dev-Referenz-Skripte (Node), kein Plugin-Source; tsc deckt via include nur src/ ab
 	]),
 );

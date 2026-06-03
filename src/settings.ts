@@ -21,9 +21,10 @@ export interface HealthSyncSettings {
 	enabledMetrics: Record<string, boolean>;
 	lastSyncTimes: Record<string, number>; // Date → last sync timestamp (epoch ms)
 	garminSession: string;
+	garminOAuth1: string; // JSON-serialisierter OAuth1Token (langlebig, ~1 Jahr)
+	garminOAuth2: string; // JSON-serialisierter OAuth2Token (kurzlebig)
 	language: string;
 	autoSync: boolean;
-	autoSyncPaused: boolean; // Automatically paused on auth error
 	writeTrainings: boolean; // Machine-readable training data in frontmatter
 	writeWorkoutLocation: boolean; // Reverse-geocoded workout location in frontmatter
 	serverRegion: ServerRegion;
@@ -38,9 +39,10 @@ export const DEFAULT_SETTINGS: HealthSyncSettings = {
 	enabledMetrics: getDefaultEnabledMetrics(),
 	lastSyncTimes: {},
 	garminSession: "",
+	garminOAuth1: "",
+	garminOAuth2: "",
 	language: "en",
 	autoSync: true,
-	autoSyncPaused: false,
 	writeTrainings: false,
 	writeWorkoutLocation: true,
 	serverRegion: "international",
@@ -107,13 +109,13 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					this.display();
 				}));
 
-		// Garmin Login
+		// Garmin Login. Bei needsUserLogin werden die OAuth-Token verworfen → erscheint
+		// als "nicht verbunden"; transiente Fehler lassen die Token stehen und werden
+		// automatisch mit Backoff erneut versucht (kein eigener UI-Zustand nötig).
 		const hasSavedSession = this.plugin.isSessionValid();
-		const garminStatus = !hasSavedSession
-			? t("settingsGarminLoggedOut", lang)
-			: this.plugin.settings.autoSyncPaused
-				? t("settingsGarminPaused", lang)
-				: t("settingsGarminLoggedIn", lang);
+		const garminStatus = hasSavedSession
+			? t("settingsGarminLoggedIn", lang)
+			: t("settingsGarminLoggedOut", lang);
 		const loginSetting = new Setting(containerEl)
 			.setName(t("settingsGarminLogin", lang))
 			.setDesc(`${garminStatus}. ${t("settingsGarminSessionPrivacyDesc", lang)}`);
@@ -125,15 +127,6 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					await this.plugin.logout();
 					this.display();
 				}));
-			if (this.plugin.settings.autoSyncPaused) {
-				loginSetting.addButton(btn => btn
-					.setButtonText(t("settingsGarminLogin", lang))
-					.setCta()
-					.onClick(async () => {
-						await this.plugin.loginViaBrowser();
-						this.display();
-					}));
-			}
 		} else {
 			loginSetting.addButton(btn => btn
 				.setButtonText(t("settingsGarminLogin", lang))
@@ -145,19 +138,13 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 		}
 
 		// Auto-Sync
-		const autoSyncDesc = this.plugin.settings.autoSyncPaused
-			? t("settingsAutoSyncPaused", lang)
-			: t("settingsAutoSyncDesc", lang);
 		new Setting(containerEl)
 			.setName(t("settingsAutoSync", lang))
-			.setDesc(autoSyncDesc)
+			.setDesc(t("settingsAutoSyncDesc", lang))
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.autoSync)
 				.onChange(async (value) => {
 					this.plugin.settings.autoSync = value;
-					if (value) {
-						this.plugin.settings.autoSyncPaused = false;
-					}
 					await this.plugin.saveSettings();
 					this.display();
 				}));

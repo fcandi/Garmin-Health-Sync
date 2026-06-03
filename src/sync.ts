@@ -127,7 +127,6 @@ export class SyncManager {
 					}
 				} catch (error) {
 					if (isLoginRequiredError(error)) {
-						settings.autoSyncPaused = true;
 						new Notice(t("noticeLoginRequired", settings.language));
 						throw error;
 					}

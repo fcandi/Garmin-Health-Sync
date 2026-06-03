@@ -2,7 +2,7 @@ import { App, Modal, Notice, Plugin, Setting, TFile } from "obsidian";
 import { DEFAULT_SETTINGS, HealthSyncSettings, HealthSyncSettingTab } from "./settings";
 import { SyncManager } from "./sync";
 import { GarminProvider } from "./providers/garmin/garmin-provider";
-import type { GarminSession } from "./providers/garmin/garmin-api";
+import type { OAuth1Token, OAuth2Token } from "./providers/garmin/garmin-oauth";
 import { t } from "./i18n/t";
 import { isLoginRequiredError } from "./errors";
 
@@ -28,15 +28,9 @@ export default class HealthSyncPlugin extends Plugin {
 		this.garminProvider = new GarminProvider();
 		this.applyServerRegion();
 
-		// Restore session
-		if (this.settings.garminSession) {
-			try {
-				const session = JSON.parse(this.settings.garminSession) as GarminSession;
-				this.garminProvider.setSession(session);
-			} catch {
-				// Ignore invalid session
-			}
-		}
+		// Restore persisted OAuth tokens; migrate legacy cookie users (M6)
+		this.restoreTokens();
+		this.migrateLegacySession();
 
 		this.syncManager = new SyncManager(this.app, this.garminProvider);
 
@@ -54,11 +48,10 @@ export default class HealthSyncPlugin extends Plugin {
 			callback: () => {
 				new BackfillModal(this.app, this.settings.language, (from, to) => {
 					void (async () => {
-						const count = await this.syncManager.backfill(from, to, this.settings);
-						if (count > 0 || this.settings.autoSyncPaused) {
-							this.saveSession();
-							await this.saveSettings();
-						}
+						await this.syncManager.backfill(from, to, this.settings);
+						// Token könnten sich beim Backfill refresht haben → persistieren.
+						this.saveTokens();
+						await this.saveSettings();
 					})();
 				}).open();
 			},
@@ -82,15 +75,14 @@ export default class HealthSyncPlugin extends Plugin {
 		);
 	}
 
-	onunload() {
-		try { this.garminProvider.closeBrowser(); } catch { /* ignore */ }
-	}
-
 	/** Auto-sync — checks the last 7 days, syncs missing or outdated data */
 	private async tryAutoSync(): Promise<void> {
 		if (!this.settings.autoSync) return;
-		if (this.settings.autoSyncPaused) return;
 		if (this.autoSyncRunning) return;
+		// Phase 7: Die State-Machine entscheidet. needsUserLogin pausiert dauerhaft,
+		// temporarilyUnavailable nur bis zum Ablauf des Backoffs. Kein Cookie-Probe
+		// mehr — der OAuth2-Refresh passiert silent in fetchDataForDate.
+		if (!this.garminProvider.shouldAttemptSync()) return;
 
 		const now = Date.now();
 		if (now - this.lastAutoSyncAttempt < AUTO_SYNC_TRIGGER_DEBOUNCE_MS) return;
@@ -103,56 +95,16 @@ export default class HealthSyncPlugin extends Plugin {
 		}
 
 		if (!this.garminProvider.isSessionValid()) {
-			this.settings.autoSyncPaused = true;
-			await this.saveSettings();
-			this.showGarminLoginRequiredNotice("expired");
+			this.showGarminLoginRequiredNotice("no OAuth token");
 			return;
 		}
 
 		this.autoSyncRunning = true;
 		try {
-			// Verify the session is actually alive on Garmin's side before starting
-			// the batch. Prevents mid-batch 401s when server-side cookies have
-			// expired even though our local 30-day heuristic still says "valid".
-			const sessionOk = await this.ensureAliveSession();
-			if (!sessionOk) {
-				this.settings.autoSyncPaused = true;
-				await this.saveSettings();
-				this.showGarminLoginRequiredNotice("silent re-login failed");
-				return;
-			}
 			await this.runAutoSync(datesToSync);
 		} finally {
 			this.autoSyncRunning = false;
 		}
-	}
-
-	/** Guarantees a usable Garmin session before a batch starts without showing
-	 *  interactive login UI. Auto-sync may pause itself, but it must not surprise
-	 *  the user with a Garmin login popup while opening a daily note. */
-	private async ensureAliveSession(): Promise<boolean> {
-		if (!this.garminProvider.isBrowserReady()) {
-			return this.trySilentReauth("browser not ready");
-		}
-
-		const alive = await this.garminProvider.probeSession();
-		if (alive) return true;
-
-		console.debug("Garmin Health Sync: Session probe failed — attempting silent re-login");
-		this.garminProvider.closeBrowser();
-		return this.trySilentReauth("probe failed");
-	}
-
-	private async trySilentReauth(reason: string): Promise<boolean> {
-		console.debug(`Garmin Health Sync: Attempting silent re-login (${reason})`);
-		const ok = await this.garminProvider.silentAuthenticate();
-		if (ok) {
-			this.saveSession();
-			await this.saveSettings();
-		} else {
-			console.debug("Garmin Health Sync: Silent re-login failed — manual login required");
-		}
-		return ok;
 	}
 
 	private getAutoSyncDates(now = Date.now()): string[] {
@@ -231,7 +183,7 @@ export default class HealthSyncPlugin extends Plugin {
 				}
 			}
 
-			this.saveSession();
+			this.saveTokens();
 			await this.saveSettings();
 
 			if (synced > 0) {
@@ -239,14 +191,16 @@ export default class HealthSyncPlugin extends Plugin {
 				console.debug(`Garmin Health Sync: Auto-sync done — ${synced}/${datesToSync.length} days synced`);
 			}
 		} catch (error) {
-			if (isLoginRequiredError(error)) {
+			// Token evtl. refresht/gelöscht → persistieren. Der dauerhafte vs. transiente
+			// Zustand steckt in der State-Machine (provider.getAuthState()).
+			this.saveTokens();
+			await this.saveSettings();
+			if (isLoginRequiredError(error) || this.garminProvider.getAuthState() === "needsUserLogin") {
 				this.showGarminLoginRequiredNotice("sync hit login_required");
 			} else {
-				console.error("Garmin Health Sync: Auto-sync failed", error);
-				new Notice(t("noticeAutoSyncPaused", this.settings.language));
+				// Transienter Fehler: temporarilyUnavailable + Backoff, NICHT dauerhaft pausieren.
+				console.debug("Garmin Health Sync: Auto-sync transient failure — will retry with backoff", error);
 			}
-			this.settings.autoSyncPaused = true;
-			await this.saveSettings();
 		}
 	}
 
@@ -262,13 +216,14 @@ export default class HealthSyncPlugin extends Plugin {
 			const success = await this.syncManager.syncDate(syncDate, this.settings);
 			if (success) {
 				this.settings.lastSyncTimes[syncDate] = Date.now();
-				this.saveSession();
-				await this.saveSettings();
 			}
+			this.saveTokens();
+			await this.saveSettings();
 		} catch (error) {
-			if (isLoginRequiredError(error)) {
-				this.settings.autoSyncPaused = true;
-				await this.saveSettings();
+			this.saveTokens();
+			await this.saveSettings();
+			if (isLoginRequiredError(error) || this.garminProvider.getAuthState() === "needsUserLogin") {
+				this.showGarminLoginRequiredNotice("manual sync login_required");
 			}
 		}
 	}
@@ -285,30 +240,33 @@ export default class HealthSyncPlugin extends Plugin {
 		return noteDate;
 	}
 
-	/** BrowserWindow login from settings */
+	/** Interactive OAuth login from settings (opens the Garmin login window). */
 	async loginViaBrowser(): Promise<void> {
 		const lang = this.settings.language;
 		try {
 			const success = await this.garminProvider.authenticate();
 			if (success) {
-				this.settings.autoSyncPaused = false;
-				this.saveSession();
+				this.saveTokens();
 				await this.saveSettings();
 				new Notice(t("noticeLoginSuccess", lang));
+				// Frischer Login → State-Machine ist ready; sofort einen Sync anstoßen.
+				this.lastAutoSyncAttempt = 0;
+				void this.tryAutoSync();
 			} else {
 				new Notice(t("noticeLoginFailed", lang));
 			}
 		} catch (error) {
-			console.error("Garmin Health Sync: Browser login failed", error);
+			console.error("Garmin Health Sync: OAuth login failed", error);
 			new Notice(t("noticeLoginFailed", lang));
 		}
 	}
 
-	/** Logout — clear session */
+	/** Logout — clear OAuth tokens and persisted state */
 	async logout(): Promise<void> {
 		await this.garminProvider.clearSession();
 		this.settings.garminSession = "";
-		this.settings.autoSyncPaused = true;
+		this.settings.garminOAuth1 = "";
+		this.settings.garminOAuth2 = "";
 		await this.saveSettings();
 	}
 
@@ -373,9 +331,33 @@ export default class HealthSyncPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	private saveSession(): void {
-		const garminSession = this.garminProvider.getSession();
-		this.settings.garminSession = garminSession ? JSON.stringify(garminSession) : "";
+	/** Restore persisted OAuth tokens into the provider on startup. */
+	private restoreTokens(): void {
+		const parse = <T>(raw: string): T | null => {
+			if (!raw) return null;
+			try { return JSON.parse(raw) as T; } catch { return null; }
+		};
+		const oauth1 = parse<OAuth1Token>(this.settings.garminOAuth1);
+		const oauth2 = parse<OAuth2Token>(this.settings.garminOAuth2);
+		if (oauth1) this.garminProvider.setTokens(oauth1, oauth2);
+	}
+
+	/** Persist the provider's current OAuth tokens (they may have been refreshed). */
+	private saveTokens(): void {
+		const { oauth1, oauth2 } = this.garminProvider.getTokens();
+		this.settings.garminOAuth1 = oauth1 ? JSON.stringify(oauth1) : "";
+		this.settings.garminOAuth2 = oauth2 ? JSON.stringify(oauth2) : "";
+	}
+
+	/** M6: Bestandsnutzer mit alter Cookie-Session (aber ohne OAuth1) einmalig zum
+	 *  Neu-Anmelden auffordern und das Legacy-Feld leeren, damit die Notice nicht
+	 *  erneut erscheint. Der Re-Login läuft dann über den neuen OAuth-Flow. */
+	private migrateLegacySession(): void {
+		if (this.settings.garminSession && !this.settings.garminOAuth1) {
+			new Notice(t("noticeMigrationReloginRequired", this.settings.language), 0);
+			this.settings.garminSession = "";
+			void this.saveSettings();
+		}
 	}
 
 	private showGarminLoginRequiredNotice(reason: string): void {
@@ -408,7 +390,7 @@ export default class HealthSyncPlugin extends Plugin {
 		button.textContent = t("noticeLoginInProgress", this.settings.language);
 		await this.loginViaBrowser();
 
-		if (this.garminProvider.isSessionValid() && !this.settings.autoSyncPaused) {
+		if (this.garminProvider.isSessionValid() && this.garminProvider.getAuthState() !== "needsUserLogin") {
 			notice.hide();
 			if (this.loginRequiredNotice === notice) this.loginRequiredNotice = null;
 			this.lastAutoSyncAttempt = 0;

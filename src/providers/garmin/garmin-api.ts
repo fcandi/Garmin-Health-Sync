@@ -1,5 +1,11 @@
+import { requestUrl } from "obsidian";
 import type { ServerRegion } from "../../settings";
-import { LoginRequiredError, isLoginRequiredError } from "../../errors";
+import { LoginRequiredError, GarminAuthError, isGarminAuthError, isAuthFailureStatus } from "../../errors";
+import { getConsumer, getOAuth1, exchange, type OAuth1Token, type OAuth2Token, type Consumer } from "./garmin-oauth";
+import { AuthStateMachine, type AuthState } from "./auth-state";
+
+// User-Agent für die connectapi-Bearer-Aufrufe (Android-Client, Garmin-Erwartung).
+const OAUTH_UA = "com.garmin.android.apps.connectmobile";
 
 interface RegionUrls {
 	connectBase: string;
@@ -7,21 +13,47 @@ interface RegionUrls {
 	modernBase: string;
 	ssoSignin: string;
 	apiBase: string;
+	domain: string;          // "garmin.com" | "garmin.cn" — für die OAuth-/connectapi-Endpoints
+	ssoEmbed: string;        // CAS-`service` + `login-url` für getOAuth1 (garth-Web-Flow, M1/M2)
+	ssoSigninWidget: string; // gauth-widget-Signin-Endpoint, liefert nach Login embed?ticket=ST-…
 }
 
 function getRegionUrls(region: ServerRegion): RegionUrls {
 	const isChina = region === "china";
+	const domain = isChina ? "garmin.cn" : "garmin.com";
 	const connectBase = isChina ? "https://connect.garmin.cn" : "https://connect.garmin.com";
 	const ssoSignin = isChina
 		? "https://sso.garmin.cn/portal/sso/zh-CN/sign-in"
 		: "https://sso.garmin.com/portal/sso/en-US/sign-in";
+	// garth-Web-Embed-Flow: `service` + `login-url` = …/sso/embed; Login über das
+	// gauth-widget-Signin. Nach Login navigiert die Seite auf embed?ticket=ST-….
+	const ssoEmbed = `https://sso.${domain}/sso/embed`;
+	const ssoSigninWidget = `https://sso.${domain}/sso/signin`;
 	return {
 		connectBase,
 		appBase: `${connectBase}/app`,
 		modernBase: `${connectBase}/modern`,
 		ssoSignin,
-		apiBase: `${connectBase}/gc-api`,
+		apiBase: `https://connectapi.${domain}`, // M3: Bearer-API statt Cookie-gc-api
+		domain,
+		ssoEmbed,
+		ssoSigninWidget,
 	};
+}
+
+/** Robust gegen Electron-Versionen: Navigations-/Redirect-Events liefern die URL
+ *  mal als String-Argument, mal als Event-Objekt mit `.url`. */
+function findUrlInArgs(args: unknown[]): string {
+	for (const a of args) {
+		if (typeof a === "string" && a.startsWith("http")) return a;
+	}
+	for (const a of args) {
+		if (a && typeof a === "object" && "url" in a) {
+			const u = (a as { url: unknown }).url;
+			if (typeof u === "string") return u;
+		}
+	}
+	return "";
 }
 
 function getEndpoints(apiBase: string): Record<string, (displayName: string, date: string) => string> {
@@ -76,39 +108,15 @@ export function calculateBatchDelay(endpointCount: number): number {
 	return Math.max(cycleTimeMs - 2000, 1000);
 }
 
-export interface GarminSession {
-	displayName: string;
-	timestamp: number;
-	cookies?: GarminCookie[];
-}
-
-interface GarminCookie {
-	name: string;
-	value: string;
-	domain: string;
-	path?: string;
-	secure?: boolean;
-	httpOnly?: boolean;
-	expirationDate?: number;
-	sameSite?: "unspecified" | "no_restriction" | "lax" | "strict";
-}
-
 type BrowserWindowType = {
 	webContents: {
-		session: {
-			cookies: {
-				get: (filter: { url?: string; domain?: string; name?: string }) => Promise<GarminCookie[]>;
-				set: (details: GarminCookie & { url: string }) => Promise<void>;
-				remove: (url: string, name: string) => Promise<void>;
-			};
-			flushStorageData?: () => Promise<void>;
-		};
 		executeJavaScript: (code: string) => Promise<string>;
 		getURL: () => string;
 		insertCSS: (css: string) => Promise<string>;
+		setUserAgent?: (ua: string) => void;
 		on: (event: string, handler: (...args: unknown[]) => void) => void;
 	};
-	loadURL: (url: string) => Promise<void>;
+	loadURL: (url: string, options?: { userAgent?: string }) => Promise<void>;
 	close: () => void;
 	on: (event: string, handler: (...args: unknown[]) => void) => void;
 	hide: () => void;
@@ -117,8 +125,12 @@ type BrowserWindowType = {
 };
 
 export class GarminApi {
-	private session: GarminSession | null = null;
-	private browserWindow: BrowserWindowType | null = null;
+	// OAuth-Token (M1/M2): langlebiges OAuth1 + kurzlebiges OAuth2. Persistenz via main.ts.
+	private oauth1: OAuth1Token | null = null;
+	private oauth2: OAuth2Token | null = null;
+	private consumer: Consumer | null = null;       // öffentliche Consumer-Keys, gecacht
+	private displayName = "";                          // aus socialProfile, gecacht
+	private readonly authState = new AuthStateMachine(); // Phase 7: Auth-/Refresh-Zustand
 	private requiredEndpoints: string[] | null = null;
 	private urls: RegionUrls = getRegionUrls("international");
 	private endpoints: Record<string, (displayName: string, date: string) => string> = getEndpoints(this.urls.apiBase);
@@ -128,12 +140,25 @@ export class GarminApi {
 		this.endpoints = getEndpoints(this.urls.apiBase);
 	}
 
-	setSession(session: GarminSession | null): void {
-		this.session = session;
+	/** Setzt die persistierten OAuth-Token (beim Restore/Login). */
+	setTokens(oauth1: OAuth1Token | null, oauth2: OAuth2Token | null): void {
+		this.oauth1 = oauth1;
+		this.oauth2 = oauth2;
 	}
 
-	getSession(): GarminSession | null {
-		return this.session;
+	/** Liefert die aktuellen Token zur Persistenz. */
+	getTokens(): { oauth1: OAuth1Token | null; oauth2: OAuth2Token | null } {
+		return { oauth1: this.oauth1, oauth2: this.oauth2 };
+	}
+
+	/** Aktueller Auth-Zustand (für UI/Logik). */
+	getAuthState(): AuthState {
+		return this.authState.state;
+	}
+
+	/** Darf der Auto-Sync jetzt einen Versuch starten? (Backoff/needsUserLogin) */
+	shouldAttemptSync(): boolean {
+		return this.authState.shouldAttemptSync();
 	}
 
 	/** Sets the endpoints to be called on the next fetch */
@@ -141,416 +166,238 @@ export class GarminApi {
 		this.requiredEndpoints = endpoints;
 	}
 
+	/** Gültig = langlebiges OAuth1-Token vorhanden (ersetzt die 30-Tage-Heuristik,
+	 *  die Wurzelursache der Auto-Sync-Pausen). */
 	isSessionValid(): boolean {
-		if (!this.session) return false;
-		const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-		return Date.now() - this.session.timestamp < thirtyDays;
-	}
-
-	isBrowserReady(): boolean {
-		return this.browserWindow !== null && !this.browserWindow.isDestroyed();
-	}
-
-	closeBrowser(): void {
-		if (this.isBrowserReady()) {
-			this.browserWindow!.close();
-		}
-		this.browserWindow = null;
+		return this.oauth1 != null;
 	}
 
 	async clearSession(): Promise<void> {
-		this.session = null;
+		this.oauth1 = null;
+		this.oauth2 = null;
+		this.displayName = "";
+		this.authState.reset();
 		this.clearCache();
-		await this.clearGarminCookies();
-		this.closeBrowser();
 	}
 
-	/** Login via Electron BrowserWindow.
-	 *  @param opts.silent  If true, never shows the window and uses a shorter
-	 *                      timeout. Used by auto-sync for invisible cookie refresh. */
-	async loginViaBrowser(opts: { silent?: boolean } = {}): Promise<boolean> {
+	// === M1: OAuth-Ticket-Abgriff aus dem BrowserWindow (garth-Web-Embed-Flow) ===
+	// Lädt das gauth-widget-Signin mit `service=…/sso/embed`. Nach erfolgreichem
+	// Login (+ MFA) navigiert die Seite auf `…/sso/embed?ticket=ST-…` — das Ticket
+	// steht in der URL (und im HTML). Abgriff über zwei Wege:
+	//   (a) Navigations-URL mit `ticket=…`  (Primärweg)
+	//   (b) HTML-Scrape der Seite nach `embed?ticket=…`  (Backup)
+	// `preauthorized` (getOAuth1) bekommt `login-url=…/sso/embed`, passend zum
+	// `service`. Bei Fehlschlag: Navigations-URLs (live geloggt) + HTML-Diagnose.
+	// Dies ist der reguläre interaktive Login; OAuth2-Refresh + Datenabruf laufen
+	// danach silent ohne BrowserWindow (ensureValidOAuth2/fetchDataForDate).
+	async loginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
 		const silent = opts.silent ?? false;
 		const BrowserWindow = this.getBrowserWindowConstructor();
-
-		const signinParams: Record<string, string> = { clientId: "GarminConnect", service: this.urls.appBase };
-		const signinUrl = this.buildUrl(this.urls.ssoSignin, signinParams);
-
-		return new Promise<boolean>((resolve) => {
-			const authWindow: BrowserWindowType = new BrowserWindow({
-				width: 500,
-				height: 700,
-				show: !silent,
-				title: "Garmin Connect Login",
-				webPreferences: {
-					nodeIntegration: false,
-					contextIsolation: false,
-				},
-			});
-
-			let resolved = false;
-			let pollInterval: ReturnType<typeof setInterval> | null = null;
-			let connectFallbackTimer: ReturnType<typeof setTimeout> | null = null;
-			let silentSignInTimer: ReturnType<typeof setTimeout> | null = null;
-
-			const completeLogin = async (displayName: string): Promise<void> => {
-				if (resolved) return;
-				resolved = true;
-				if (showTimer) clearTimeout(showTimer);
-				if (connectFallbackTimer) clearTimeout(connectFallbackTimer);
-				if (silentSignInTimer) clearTimeout(silentSignInTimer);
-				clearTimeout(globalTimeout);
-				await this.captureSession(authWindow, displayName);
-				this.browserWindow = authWindow;
-				if (!authWindow.isDestroyed()) authWindow.hide();
-				console.debug("Garmin Health Sync: Login successful, displayName:", displayName);
-				resolve(true);
-			};
-
-			// Global timeouts — always active, regardless of the loaded page.
-			// Fix: when session cookies expire, Garmin loads the SSO page instead of
-			// the app. isConnectPage would be false → timeouts never set → promise hangs forever.
-			// In silent mode we never reveal the window and use a much shorter timeout
-			// so a dead session doesn't hold up the auto-sync for minutes.
-			const showTimer: ReturnType<typeof setTimeout> | null = silent ? null : setTimeout(() => {
-				if (!resolved && !authWindow.isDestroyed()) {
-					console.debug("Garmin Health Sync: Auto-login taking long, showing window...");
-					authWindow.show();
-				}
-			}, 10000);
-
-			const globalTimeoutMs = silent ? 30000 : 120000;
-			const globalTimeout = setTimeout(() => {
-				if (!resolved) {
-					if (pollInterval) clearInterval(pollInterval);
-					resolved = true;
-					console.error("Garmin Health Sync: Login timeout");
-					if (!authWindow.isDestroyed()) authWindow.close();
-					resolve(false);
-				}
-			}, globalTimeoutMs);
-
-			// On every page: inject padding + interceptor
-			authWindow.webContents.on("dom-ready", () => {
-				void authWindow.webContents.insertCSS("body { padding: 12px !important; }");
-				this.injectInterceptor(authWindow);
-			});
-
-			// Wait until Connect is loaded, then extract displayName from app traffic
-			authWindow.webContents.on("did-finish-load", () => {
-				const url = authWindow.webContents.getURL();
-				console.debug("Garmin Health Sync: Page loaded:", url);
-
-				const isConnectPage = url.startsWith(this.urls.appBase) || url.startsWith(this.urls.modernBase);
-				const isSignInPage = url.startsWith(this.urls.ssoSignin);
-				if (silent && isSignInPage && !resolved && !silentSignInTimer) {
-					silentSignInTimer = setTimeout(() => {
-						if (resolved || authWindow.isDestroyed()) return;
-						const currentUrl = authWindow.webContents.getURL();
-						const stillSignInPage = currentUrl.startsWith(this.urls.ssoSignin);
-						if (!stillSignInPage) return;
-						if (pollInterval) clearInterval(pollInterval);
-						resolved = true;
-						clearTimeout(globalTimeout);
-						console.debug("Garmin Health Sync: Silent login needs interactive sign-in");
-						authWindow.close();
-						resolve(false);
-					}, 7000);
-				}
-				if (isConnectPage && !resolved) {
-					// Polling: wait until the app reveals the displayName in a URL
-					pollInterval = setInterval(() => {
-						if (resolved) { clearInterval(pollInterval!); return; }
-						void (async () => {
-						try {
-							const name = await authWindow.webContents.executeJavaScript(
-								`window.__hs_displayName || ""`
-							);
-							if (this.isPlausibleDisplayName(name)) {
-								clearInterval(pollInterval!);
-								await completeLogin(name);
-							} else {
-								console.debug("Garmin Health Sync: Waiting for displayName...");
-							}
-						} catch {
-							// Window might be navigating
-						}
-						})();
-					}, 2000);
-
-					const savedName = this.session?.displayName;
-					if (this.isPlausibleDisplayName(savedName) && !connectFallbackTimer) {
-						connectFallbackTimer = setTimeout(() => {
-							if (resolved || authWindow.isDestroyed()) return;
-							const currentUrl = authWindow.webContents.getURL();
-							const stillConnectPage = currentUrl.startsWith(this.urls.appBase) || currentUrl.startsWith(this.urls.modernBase);
-							if (!stillConnectPage) return;
-							console.debug("Garmin Health Sync: Connect app loaded; reusing saved displayName");
-							void completeLogin(savedName);
-						}, 5000);
-					}
-				}
-			});
-
-			authWindow.on("closed", () => {
-				if (showTimer) clearTimeout(showTimer);
-				if (connectFallbackTimer) clearTimeout(connectFallbackTimer);
-				if (silentSignInTimer) clearTimeout(silentSignInTimer);
-				clearTimeout(globalTimeout);
-				if (pollInterval) clearInterval(pollInterval);
-				if (this.browserWindow === authWindow) this.browserWindow = null;
-				if (!resolved) { resolved = true; resolve(false); }
-			});
-
-			void this.restoreCookies(authWindow)
-				.catch(e => console.debug("Garmin Health Sync: Cookie restore failed:", e))
-				.then(() => {
-					if (!authWindow.isDestroyed()) return authWindow.loadURL(signinUrl);
-					return undefined;
-				})
-				.catch(e => console.debug("Garmin Health Sync: Login page load failed:", e));
+		const embed = this.urls.ssoEmbed;
+		// Bewiesene Konfiguration (Gate + E2E): embedWidget=true mit service=…/sso/embed
+		// liefert zuverlässig den embed?ticket=ST-…-Redirect. Das `cssUrl` lädt Garmins
+		// Branding-Stylesheet (gestyltes Formular, Titel „GARMIN Authentication
+		// Application"). Das Logo-Banner gehört zur Host-Seiten-Chrome und erscheint im
+		// eigenständig geladenen Widget nicht — bekanntes kosmetisches Limit (embedWidget
+		// false/true ändert daran nichts; getestet 2026-06-03).
+		const signinUrl = this.buildUrl(this.urls.ssoSigninWidget, {
+			id: "gauth-widget",
+			embedWidget: "true",
+			gauthHost: embed,
+			service: embed,
+			source: embed,
+			redirectAfterAccountLoginUrl: embed,
+			redirectAfterAccountCreationUrl: embed,
+			cssUrl: `https://connect.${this.urls.domain}/gauth-custom-v1.2-min.css`,
 		});
-	}
 
-	private isPlausibleDisplayName(value: unknown): value is string {
-		if (typeof value !== "string") return false;
-		const name = value.trim();
-		if (!name || name === "undefined") return false;
-		if (/^v\d+$/i.test(name)) return false;
-		const reserved = new Set(["api", "app", "daily", "gc-api", "modern", "personal-information", "socialProfile", "usersummary"]);
-		if (reserved.has(name)) return false;
-		return /^[A-Za-z0-9._-]{2,80}$/.test(name);
-	}
+		const win: BrowserWindowType = new BrowserWindow({
+			width: 500,
+			height: 700,
+			show: !silent,
+			title: "Garmin Connect Login",
+			webPreferences: { nodeIntegration: false, contextIsolation: false },
+		});
 
-	/** Inject interceptor into the page — captures displayName and API responses */
-	private injectInterceptor(win: BrowserWindowType): void {
-		win.webContents.executeJavaScript(`
-			(function() {
-				if (window.__hs_injected) return;
-				window.__hs_injected = true;
-				window.__hs_displayName = "";
-				window.__hs_responses = {};
-				window.__hs_apiHeaders = null;
+		// JS, das Seite/URL nach einem ST-Ticket durchsucht (kein Regex-Backslash → templatesicher).
+		const scrapeJs =
+			`(function(){try{` +
+			`var loc=(location&&location.search)||"";` +
+			`if(loc.indexOf("ticket=")>=0){var p=new URLSearchParams(loc).get("ticket");if(p)return p;}` +
+			`var h=document.documentElement?document.documentElement.outerHTML:"";` +
+			`var key="embed?ticket=";var i=h.indexOf(key);if(i<0){key="ticket=";i=h.indexOf(key);}` +
+			`if(i<0)return "";var rest=h.slice(i+key.length);var end=rest.search(/[^A-Za-z0-9._-]/);` +
+			`return end<0?rest:rest.slice(0,end);}catch(e){return "";}})()`;
 
-				function isPlausibleDisplayName(value) {
-					if (typeof value !== "string") return false;
-					var name = value.trim();
-					if (!name || name === "undefined") return false;
-					if (/^v\\d+$/i.test(name)) return false;
-					var reserved = {
-						"api": true,
-						"app": true,
-						"daily": true,
-						"gc-api": true,
-						"modern": true,
-						"personal-information": true,
-						"socialProfile": true,
-						"usersummary": true
-					};
-					if (reserved[name]) return false;
-					return /^[A-Za-z0-9._-]{2,80}$/.test(name);
-				}
+		const timeoutMs = silent ? 30000 : 120000;
 
-				function setDisplayName(candidate) {
-					if (!isPlausibleDisplayName(candidate)) return;
-					if (!window.__hs_displayName || !isPlausibleDisplayName(window.__hs_displayName)) {
-						window.__hs_displayName = candidate.trim();
-					}
-				}
-
-				function extractDisplayNameFromData(data) {
-					if (!data || typeof data !== "object") return "";
-					var candidates = [
-						data.displayName,
-						data.userName,
-						data.username,
-						data.profile && data.profile.displayName,
-						data.profile && data.profile.userName,
-						data.socialProfile && data.socialProfile.displayName,
-						data.socialProfile && data.socialProfile.userName,
-						data.userProfile && data.userProfile.displayName,
-						data.userProfile && data.userProfile.userName
-					];
-					for (var i = 0; i < candidates.length; i++) {
-						if (isPlausibleDisplayName(candidates[i])) return candidates[i];
-					}
-					return "";
-				}
-
-				// Intercept fetch
-				const origFetch = window.fetch;
-				window.fetch = function(input, init) {
-					const url = typeof input === "string" ? input : (input?.url || "");
-
-					// Capture API headers (especially connect-csrf-token for direct fetch)
-					if (url.includes("/gc-api/") || url.includes("/proxy/")) {
-						try {
-							var h = {};
-							if (init && init.headers) {
-								if (init.headers instanceof Headers) {
-									init.headers.forEach(function(v, k) { h[k] = v; });
-								} else if (typeof init.headers === "object") {
-									Object.keys(init.headers).forEach(function(k) { h[k] = init.headers[k]; });
-								}
-							}
-							if (typeof input === "object" && input instanceof Request && input.headers) {
-								input.headers.forEach(function(v, k) { h[k] = v; });
-							}
-							if (Object.keys(h).length > 0) {
-								window.__hs_apiHeaders = h;
-							}
-						} catch(e) {}
-					}
-					const result = origFetch.apply(this, arguments);
-
-					// Extract displayName from URLs
-					const nameMatch = url.match(/\\/usersummary\\/daily\\/([^/?]+)/)
-						|| url.match(/\\/socialProfile\\/([^?/]+)/)
-						|| url.match(/\\/personal-information\\/([^?/]+)/);
-					if (nameMatch && nameMatch[1]) setDisplayName(decodeURIComponent(nameMatch[1]));
-
-					// Capture API responses
-					if (url.includes("/gc-api/") || url.includes("/proxy/")) {
-						result.then(r => r.clone().json()).then(data => {
-							setDisplayName(extractDisplayNameFromData(data));
-							if (url.includes("usersummary/daily/") && url.includes("calendarDate"))
-								window.__hs_responses.dailySummary = data;
-							if (url.includes("dailySleepData"))
-								window.__hs_responses.sleep = data?.dailySleepDTO || data;
-							if (url.includes("hrv-service/hrv"))
-								window.__hs_responses.hrv = data;
-							if (url.includes("bodyBattery"))
-								window.__hs_responses.bodyBattery = data;
-							if (url.includes("activities/search/activities"))
-								window.__hs_responses.activities = data;
-							if (url.includes("weight-service/weight"))
-								window.__hs_responses.weight = data;
-							if (url.includes("spo2-service") || url.includes("daily/spo2"))
-								window.__hs_responses.spo2 = data;
-							if (url.includes("respiration"))
-								window.__hs_responses.respiration = data;
-							if (url.includes("maxmet"))
-								window.__hs_responses.trainingStatus = data;
-							if (url.includes("trainingreadiness"))
-								window.__hs_responses.trainingReadiness = Array.isArray(data) ? data[0] : data;
-						}).catch(() => {});
-					}
-
-					return result;
+		try {
+			const ticket = await new Promise<{ value: string; via: string } | null>((resolve) => {
+				let done = false;
+				let poll: ReturnType<typeof setInterval> | null = null;
+				const finish = (t: { value: string; via: string } | null): void => {
+					if (done) return;
+					done = true;
+					if (poll) clearInterval(poll);
+					// Ticket gegriffen → Fenster sofort verstecken, damit die Garmin-
+					// Embed-Ticket-Seite (rohe JSON-Antwort) nicht aufblitzt, während
+					// getOAuth1/exchange im Hintergrund laufen.
+					if (t && !win.isDestroyed()) { try { win.hide(); } catch { /* ignore */ } }
+					resolve(t);
 				};
 
-				// Also intercept XHR (Garmin uses both)
-				const origOpen = XMLHttpRequest.prototype.open;
-				const origSend = XMLHttpRequest.prototype.send;
-				XMLHttpRequest.prototype.open = function(method, url) {
-					this.__hs_url = url;
-					return origOpen.apply(this, arguments);
+				// (a) Ticket aus einer Navigations-URL (jede URL mit ?ticket=…).
+				const onNav = (...args: unknown[]): void => {
+					const url = findUrlInArgs(args);
+					if (done || !url || !url.includes("ticket=")) return;
+					try {
+						const tk = new URL(url).searchParams.get("ticket");
+						if (tk && tk.length > 4) {
+							console.debug(`Garmin Health Sync: M1 — ticket in nav URL (${new URL(url).host}):`, tk.slice(0, 14) + "…");
+							finish({ value: tk, via: "redirect" });
+						}
+					} catch { /* keine gültige URL */ }
 				};
-				XMLHttpRequest.prototype.send = function() {
-					const url = this.__hs_url || "";
-					const nameMatch = url.match(/\\/usersummary\\/daily\\/([^/?]+)/)
-						|| url.match(/\\/socialProfile\\/([^?/]+)/)
-						|| url.match(/\\/personal-information\\/([^?/]+)/);
-					if (nameMatch && nameMatch[1]) setDisplayName(decodeURIComponent(nameMatch[1]));
-					this.addEventListener("load", function() {
-						try {
-							if (url.includes("graphql") && this.responseText) {
-								// GraphQL responses can also contain data
-								const data = JSON.parse(this.responseText);
-								if (data?.data) window.__hs_responses.graphql = data.data;
-							}
-						} catch {}
-					});
-					return origSend.apply(this, arguments);
-				};
-			})();
-		`).catch((e: unknown) => { console.debug("Garmin Health Sync: Interceptor injection failed:", e); });
-	}
+				for (const ev of ["will-redirect", "did-redirect-navigation", "did-navigate", "did-navigate-in-page", "did-start-navigation"]) {
+					win.webContents.on(ev, onNav);
+				}
 
-	private getCookieUrls(): string[] {
-		return [
-			this.urls.connectBase,
-			this.urls.appBase,
-			this.urls.modernBase,
-			new URL(this.urls.ssoSignin).origin,
-		];
-	}
-
-	private async captureSession(win: BrowserWindowType, displayName: string): Promise<void> {
-		const cookieMap = new Map<string, GarminCookie>();
-		const cookieGroups = await Promise.all(this.getCookieUrls().map(async url => {
-			return win.webContents.session.cookies.get({ url }).catch(e => {
-				console.debug("Garmin Health Sync: Cookie capture failed:", url, e);
-				return [];
-			});
-		}));
-
-		for (const cookies of cookieGroups) {
-			for (const cookie of cookies) {
-				cookieMap.set(this.cookieKey(cookie), {
-					name: cookie.name,
-					value: cookie.value,
-					domain: cookie.domain,
-					path: cookie.path ?? "/",
-					secure: cookie.secure,
-					httpOnly: cookie.httpOnly,
-					expirationDate: cookie.expirationDate,
-					sameSite: cookie.sameSite,
+				win.webContents.on("dom-ready", () => {
+					void win.webContents.insertCSS("body { padding: 12px !important; }").catch(() => undefined);
 				});
+
+				// (b) HTML-Scrape als Backup, falls das Ticket nur im Seiten-HTML steht.
+				poll = setInterval(() => {
+					if (done) return;
+					if (win.isDestroyed()) { finish(null); return; }
+					void win.webContents.executeJavaScript(scrapeJs).then((tk: unknown) => {
+						if (typeof tk === "string" && tk.startsWith("ST-")) {
+							console.debug("Garmin Health Sync: M1 — ticket via HTML scrape:", tk.slice(0, 14) + "…");
+							finish({ value: tk, via: "scrape" });
+						}
+					}).catch(() => { /* Fenster navigiert gerade */ });
+				}, 1000);
+
+				// Timeout: knappe Breadcrumb, auf welcher Seite der Login hängenblieb
+				// (ohne Query/Ticket, ohne HTML-Dump).
+				setTimeout(() => {
+					if (done) return;
+					void win.webContents.executeJavaScript(
+						`(function(){return JSON.stringify({url:(location.href||"").split("?")[0],title:document.title});})()`
+					).then((raw: unknown) => {
+						console.debug("Garmin Health Sync: login timed out without a ticket. Page:", typeof raw === "string" ? raw : "(none)");
+					}).catch(() => { /* Fenster evtl. zerstört */ }).then(() => finish(null));
+				}, timeoutMs);
+
+				// Laden NACH der Handler-Registrierung.
+				void win.loadURL(signinUrl).catch((e: unknown) => {
+					console.debug("Garmin Health Sync: M1 sign-in load failed:", e);
+				});
+			});
+
+			if (!ticket) {
+				console.debug("Garmin Health Sync: M1 — no service ticket captured (timeout or sign-in incomplete)");
+				return { ok: false, detail: "no_ticket" };
+			}
+			console.debug(`Garmin Health Sync: M1 — service ticket captured via ${ticket.via}:`, ticket.value.slice(0, 14) + "…");
+
+			// Ticket → OAuth1 → OAuth2 (beweist M1 + M2 end-to-end gegen echte Garmin-Server).
+			// login-url = …/sso/embed, passend zum `service` des Tickets.
+			const consumer = await this.getConsumerCached();
+			const oauth1 = await getOAuth1(ticket.value, consumer, this.urls.domain, this.urls.ssoEmbed);
+			this.oauth1 = oauth1;
+			console.debug("Garmin Health Sync: OAuth1 token obtained (oauth_token:", oauth1.oauth_token.slice(0, 10) + "…)");
+			const oauth2 = await exchange(oauth1, consumer, this.urls.domain, { login: true });
+			this.oauth2 = oauth2;
+			this.displayName = "";          // bei (Re-)Login neu auflösen
+			this.authState.onLogin();        // frischer Login → ready, Backoff zurücksetzen
+			console.debug("Garmin Health Sync: OAuth2 token obtained, expires_in:", oauth2.expires_in, "s");
+			return { ok: true, detail: `via=${ticket.via}; oauth1 ok; oauth2 ok; expires_in=${oauth2.expires_in}s` };
+		} catch (e: unknown) {
+			console.error("Garmin Health Sync: M1 — OAuth login failed:", e);
+			const status = e && typeof e === "object" && "status" in e ? (e as { status: number }).status : undefined;
+			const msg = e instanceof Error ? e.message : String(e);
+			return { ok: false, detail: `error${status != null ? " status=" + status : ""}: ${msg}` };
+		} finally {
+			if (!win.isDestroyed()) win.close();
+		}
+	}
+
+	/** Lädt die öffentlichen Consumer-Keys einmal und cacht sie. */
+	private async getConsumerCached(): Promise<Consumer> {
+		if (!this.consumer) this.consumer = await getConsumer();
+		return this.consumer;
+	}
+
+	/** Phase 7: stellt ein gültiges OAuth2-Access-Token sicher. Refresht es bei
+	 *  Bedarf SILENT via OAuth1 (reiner HTTPS-POST, kein BrowserWindow). Wirft bei
+	 *  fehlendem OAuth1 LoginRequiredError; bei 401/403 vom exchange GarminAuthError
+	 *  (→ needsUserLogin); transiente Fehler → temporarilyUnavailable + Backoff. */
+	private async ensureValidOAuth2(): Promise<OAuth2Token> {
+		if (!this.oauth1) {
+			this.authState.onAuthError();
+			throw new LoginRequiredError();
+		}
+		const nowSeconds = Math.floor(Date.now() / 1000);
+		// 60s Puffer, damit ein knapp gültiges Token nicht mitten im Batch abläuft.
+		if (this.oauth2 && this.oauth2.expires_at - 60 > nowSeconds) {
+			return this.oauth2;
+		}
+		this.authState.beginRefresh();
+		try {
+			const consumer = await this.getConsumerCached();
+			const oauth2 = await exchange(this.oauth1, consumer, this.urls.domain);
+			this.oauth2 = oauth2;
+			this.authState.onSuccess();
+			console.debug("Garmin Health Sync: OAuth2 silently refreshed, expires_in:", oauth2.expires_in, "s");
+			return oauth2;
+		} catch (e: unknown) {
+			if (isGarminAuthError(e) && isAuthFailureStatus(e.status)) {
+				// 401/403 = OAuth1 endgültig tot → needsUserLogin, Token verwerfen
+				// (isSessionValid wird false) und als LoginRequiredError signalisieren,
+				// damit die Aufrufer (Provider/Sync/main) die Re-Login-Notice zeigen.
+				this.authState.onAuthError();
+				this.oauth1 = null;
+				this.oauth2 = null;
+				throw new LoginRequiredError();
+			}
+			// Alles andere (Netzwerk/429/5xx/Timeout) ist transient → Backoff-Retry.
+			this.authState.onTransientError();
+			throw e;
+		}
+	}
+
+	/** Bearer-GET gegen connectapi (ersetzt den Cookie-/Interceptor-Datenpfad). */
+	private async apiGet(url: string, oauth2: OAuth2Token): Promise<{ status: number; data: unknown }> {
+		const res = await requestUrl({
+			url,
+			method: "GET",
+			headers: {
+				"User-Agent": OAUTH_UA,
+				Authorization: `Bearer ${oauth2.access_token}`,
+				"Di-Backend": `connectapi.${this.urls.domain}`,
+			},
+			throw: false,
+		});
+		const ok = res.status >= 200 && res.status < 300;
+		return { status: res.status, data: ok ? res.json : null };
+	}
+
+	/** Holt den displayName (für die nutzerspezifischen Endpoints) aus socialProfile. */
+	private async ensureDisplayName(oauth2: OAuth2Token): Promise<string> {
+		if (this.displayName) return this.displayName;
+		const url = `${this.urls.apiBase}/userprofile-service/socialProfile`;
+		const { status, data } = await this.apiGet(url, oauth2);
+		if (status >= 200 && status < 300 && data && typeof data === "object") {
+			const d = data as Record<string, unknown>;
+			const dn = (typeof d.displayName === "string" && d.displayName)
+				|| (typeof d.userName === "string" && d.userName) || "";
+			if (dn) {
+				this.displayName = dn;
+				return dn;
 			}
 		}
-
-		const capturedCookies = Array.from(cookieMap.values());
-		if (capturedCookies.length === 0) {
-			console.debug("Garmin Health Sync: Cookie capture returned no cookies; keeping previous session timestamp");
-			if (this.session) {
-				this.session = { ...this.session, displayName };
-			} else {
-				this.session = { displayName, timestamp: 0, cookies: [] };
-			}
-			return;
-		}
-
-		this.session = {
-			displayName,
-			timestamp: Date.now(),
-			cookies: capturedCookies,
-		};
-	}
-
-	private async restoreCookies(win: BrowserWindowType): Promise<void> {
-		if (!this.session?.cookies?.length) return;
-
-		const nowSeconds = Date.now() / 1000;
-		const restoreTasks: Promise<void>[] = [];
-		for (const cookie of this.session.cookies) {
-			if (cookie.expirationDate && cookie.expirationDate <= nowSeconds) continue;
-			const url = this.cookieUrl(cookie);
-			if (!url) continue;
-			restoreTasks.push(
-				win.webContents.session.cookies.set({
-					...cookie,
-					path: cookie.path ?? "/",
-					url,
-				}).catch(e => console.debug("Garmin Health Sync: Cookie restore skipped:", cookie.name, e))
-			);
-		}
-
-		await Promise.all(restoreTasks);
-
-		await win.webContents.session.flushStorageData?.();
-	}
-
-	private cookieUrl(cookie: GarminCookie): string | null {
-		const domain = cookie.domain.replace(/^\./, "");
-		if (!domain || !/^[A-Za-z0-9.-]+$/.test(domain)) {
-			console.debug("Garmin Health Sync: Skipping cookie with invalid domain:", cookie.name);
-			return null;
-		}
-		return `https://${domain}${cookie.path ?? "/"}`;
-	}
-
-	private cookieKey(cookie: Pick<GarminCookie, "domain" | "path" | "name">): string {
-		return `${cookie.domain};${cookie.path ?? "/"};${cookie.name}`;
+		throw new GarminAuthError(status, "socialProfile lieferte keinen displayName");
 	}
 
 	private getBrowserWindowConstructor(): new (opts: object) => BrowserWindowType {
@@ -559,228 +406,59 @@ export class GarminApi {
 		return (electron.remote ?? electron).BrowserWindow;
 	}
 
-	private async clearGarminCookies(): Promise<void> {
-		const BrowserWindow = this.getBrowserWindowConstructor();
-		const cleanupWindow = this.isBrowserReady()
-			? this.browserWindow!
-			: new BrowserWindow({
-				width: 1,
-				height: 1,
-				show: false,
-				title: "Garmin Connect Logout",
-				webPreferences: {
-					nodeIntegration: false,
-					contextIsolation: false,
-				},
-			});
-		const shouldCloseCleanupWindow = cleanupWindow !== this.browserWindow;
+	// --- Data fetching (M3: Bearer gegen connectapi) ---
 
-		try {
-			const seen = new Set<string>();
-			const cookieGroups = await Promise.all(this.getCookieUrls().map(async url => {
-				return cleanupWindow.webContents.session.cookies.get({ url }).catch(e => {
-					console.debug("Garmin Health Sync: Cookie lookup skipped during cleanup:", url, e);
-					return [];
-				});
-			}));
-			const removalTasks: Promise<void>[] = [];
-			for (const cookies of cookieGroups) {
-				for (const cookie of cookies) {
-					const key = this.cookieKey(cookie);
-					if (seen.has(key)) continue;
-					seen.add(key);
-					const cookieUrl = this.cookieUrl(cookie);
-					if (!cookieUrl) continue;
-					removalTasks.push(
-						cleanupWindow.webContents.session.cookies.remove(cookieUrl, cookie.name)
-							.catch(e => console.debug("Garmin Health Sync: Cookie removal skipped:", cookie.name, e))
-					);
-				}
-			}
-
-			await Promise.all(removalTasks);
-			await cleanupWindow.webContents.session.flushStorageData?.();
-		} finally {
-			if (shouldCloseCleanupWindow && !cleanupWindow.isDestroyed()) cleanupWindow.close();
-		}
-	}
-
-	/** Ensure BrowserWindow is ready */
-	async ensureBrowser(): Promise<boolean> {
-		if (this.isBrowserReady()) return true;
-		return this.loginViaBrowser();
-	}
-
-	/** Lightweight probe: verifies that Garmin still accepts the current session
-	 *  cookies by hitting a cheap profile endpoint. Used by auto-sync to detect
-	 *  server-side session expiry before a batch starts. Returns false on any
-	 *  failure (no browser, no captured headers, non-200 status, network error). */
-	async probeSession(): Promise<boolean> {
-		if (!this.session?.displayName) return false;
-		if (!this.isBrowserReady()) return false;
-
-		const dn = this.session.displayName;
-		const url = `${this.urls.apiBase}/userprofile-service/socialProfile/${dn}`;
-		const PROBE_TIMEOUT_MS = 8000;
-
-		try {
-			const headersJson = await this.browserWindow!.webContents.executeJavaScript(
-				`JSON.stringify(window.__hs_apiHeaders || null)`
-			);
-			if (!headersJson || headersJson === "null") {
-				console.debug("Garmin Health Sync: Session probe — no API headers captured yet");
-				return false;
-			}
-
-			const code = `fetch(${JSON.stringify(url)}, { headers: Object.assign({}, window.__hs_apiHeaders, { "NK": "NT", "Accept": "application/json" }) })
-				.then(r => r.status)
-				.catch(() => -1)`;
-
-			const timeout = new Promise<never>((_, reject) =>
-				setTimeout(() => reject(new Error(`probe timeout ${PROBE_TIMEOUT_MS}ms`)), PROBE_TIMEOUT_MS));
-
-			const status = await Promise.race([
-				this.browserWindow!.webContents.executeJavaScript(code),
-				timeout
-			]);
-
-			const ok = Number(status) === 200;
-			console.debug(`Garmin Health Sync: Session probe → status ${status} (${ok ? "alive" : "dead"})`);
-			return ok;
-		} catch (e) {
-			console.debug("Garmin Health Sync: Session probe failed:", e);
-			return false;
-		}
-	}
-
-	/** Silent login — identical to loginViaBrowser but never shows the window
-	 *  and gives up after 30s. Used by auto-sync for invisible cookie refresh. */
-	async silentLogin(): Promise<boolean> {
-		return this.loginViaBrowser({ silent: true });
-	}
-
-	// --- Data fetching ---
-
-	/** Fetch data for a date: first try direct fetch in BrowserWindow context, fall back to navigation */
+	/** Holt die benötigten Endpoints für ein Datum via Bearer gegen connectapi.
+	 *  Stellt vor dem Batch ein gültiges OAuth2 sicher (Phase 7) und refresht
+	 *  einmalig bei einem mid-batch-401/403. */
 	async fetchDataForDate(date: string): Promise<Record<string, unknown>> {
-		if (!this.session?.displayName) {
-			throw new Error("Not logged in");
+		let oauth2 = await this.ensureValidOAuth2();
+		const dn = await this.ensureDisplayName(oauth2);
+		const keys = this.requiredEndpoints ?? Object.keys(this.endpoints);
+
+		const first = await this.fetchEndpoints(keys, dn, date, oauth2);
+		const results = first.results;
+
+		if (first.authFailed) {
+			// Mid-batch-Auth-Fehler: einmal frisch refreshen und die fehlenden erneut holen.
+			console.debug("Garmin Health Sync: mid-batch auth failure → refreshing OAuth2 once");
+			this.oauth2 = null; // erzwingt Refresh (wirft bei 401/403 → needsUserLogin)
+			oauth2 = await this.ensureValidOAuth2();
+			const missing = keys.filter(k => !(k in results));
+			const retry = await this.fetchEndpoints(missing, dn, date, oauth2);
+			Object.assign(results, retry.results);
 		}
 
-		// Ensure BrowserWindow is ready (login if needed)
-		if (!this.isBrowserReady()) {
-			console.debug("Garmin Health Sync: Browser not ready, opening...");
-			const ok = await this.loginViaBrowser();
-			if (!ok) throw new Error("Could not open browser session");
-		}
-
-		// Fast path: parallel fetch() in BrowserWindow context (~1-2s)
-		try {
-			const data = await this.fetchDirectInBrowser(date);
-			const missing = this.getMissingRequiredEndpoints(data);
-			if (Object.keys(data).length > 0 && missing.length === 0) {
-				await this.refreshSessionFromBrowser();
-				console.debug("Garmin Health Sync: Direct fetch OK ✓ keys:", Object.keys(data).join(", "));
-				return data;
-			}
-			console.debug("Garmin Health Sync: Direct fetch incomplete, falling back to navigation. Missing:", missing.join(", ") || "all");
-			const navigationData = await this.fetchViaNavigation(date);
-			await this.refreshSessionFromBrowser();
-			return { ...data, ...navigationData };
-		} catch (e) {
-			if (isLoginRequiredError(e)) throw e;
-			console.debug("Garmin Health Sync: Direct fetch failed, falling back to navigation:", e);
-		}
-
-		// Slow path: page navigation + interceptor (~10-15s)
-		const navigationData = await this.fetchViaNavigation(date);
-		await this.refreshSessionFromBrowser();
-		return navigationData;
-	}
-
-	private getMissingRequiredEndpoints(data: Record<string, unknown>): string[] {
-		const endpointKeys = this.requiredEndpoints ?? Object.keys(this.endpoints);
-		return endpointKeys.filter(key => !(key in data));
-	}
-
-	private async refreshSessionFromBrowser(): Promise<void> {
-		if (!this.isBrowserReady()) return;
-		try {
-			const name = await this.browserWindow!.webContents.executeJavaScript(
-				`window.__hs_displayName || ""`
-			);
-			if (this.isPlausibleDisplayName(name) && this.session?.displayName !== name) {
-				console.debug("Garmin Health Sync: Refreshed displayName from browser session");
-				await this.captureSession(this.browserWindow!, name);
-			} else if (this.session?.displayName) {
-				await this.captureSession(this.browserWindow!, this.session.displayName);
-			}
-		} catch {
-			// Ignore transient navigation errors.
-		}
-	}
-
-	/** Call all required endpoints in parallel via fetch() in the BrowserWindow context */
-	private async fetchDirectInBrowser(date: string): Promise<Record<string, unknown>> {
-		const dn = this.session!.displayName;
-		const endpointKeys = this.requiredEndpoints ?? Object.keys(this.endpoints);
-		if (endpointKeys.length === 0) return {};
-
-		// Check if we captured API headers (especially CSRF token) from the app
-		const headersJson = await this.browserWindow!.webContents.executeJavaScript(
-			`JSON.stringify(window.__hs_apiHeaders || null)`
-		);
-		if (!headersJson || headersJson === "null") {
-			console.debug("Garmin Health Sync: No CSRF token captured yet — skipping direct fetch");
-			return {};
-		}
-
-		// Execute all fetch calls with the captured headers
-		const fetchCalls = endpointKeys.map(key => {
-			const buildUrl = this.endpoints[key];
-			if (!buildUrl) return `Promise.resolve({ key: ${JSON.stringify(key)}, status: 0, data: null })`;
-			const url = buildUrl(dn, date);
-			return `fetch(${JSON.stringify(url)}, { headers: Object.assign({}, window.__hs_apiHeaders, { "NK": "NT", "Accept": "application/json" }) })
-				.then(r => r.ok ? r.json().then(d => ({ key: ${JSON.stringify(key)}, status: r.status, data: d }))
-					: ({ key: ${JSON.stringify(key)}, status: r.status, data: null }))
-				.catch(e => ({ key: ${JSON.stringify(key)}, status: -1, data: null, error: String(e) }))`;
-		});
-
-		const code = `Promise.all([${fetchCalls.join(",")}]).then(r => JSON.stringify(r))`;
-
-		// Timeout: in case BrowserWindow hangs
-		const BROWSER_FETCH_TIMEOUT_MS = 15000;
-		const timeout = new Promise<never>((_, reject) =>
-			setTimeout(() => reject(new Error(`BrowserWindow fetch timeout ${BROWSER_FETCH_TIMEOUT_MS}ms`)), BROWSER_FETCH_TIMEOUT_MS));
-
-		const rawJson = await Promise.race([
-			this.browserWindow!.webContents.executeJavaScript(code),
-			timeout
-		]);
-
-		const entries = JSON.parse(rawJson) as Array<{ key: string; status: number; data: unknown; error?: string }>;
-		const results: Record<string, unknown> = {};
-		const failed: string[] = [];
-		const authFailed: string[] = [];
-
-		for (const entry of entries) {
-			if (entry.status === 200 && entry.data != null) {
-				results[entry.key] = this.transformResponse(entry.key, entry.data);
-			} else if (this.isAuthFailureStatus(entry.status)) {
-				authFailed.push(entry.key);
-			} else if (entry.status !== 200) {
-				failed.push(`${entry.key}:${entry.status}`);
-			}
-		}
-
-		if (authFailed.length > 0) {
-			console.debug("Garmin Health Sync: Direct fetch — auth-limited endpoints:", authFailed.join(", "));
-		}
-		if (failed.length > 0) {
-			console.debug("Garmin Health Sync: Direct fetch — failed endpoints:", failed.join(", "));
-		}
-
+		this.authState.onSuccess();
+		console.debug("Garmin Health Sync: fetch OK ✓ keys:", Object.keys(results).join(", ") || "(none)");
 		return results;
+	}
+
+	/** Ruft eine Endpoint-Liste parallel via Bearer ab. Liefert die transformierten
+	 *  Ergebnisse und ob ein Auth-Fehler (401/403) auftrat. */
+	private async fetchEndpoints(
+		keys: string[], dn: string, date: string, oauth2: OAuth2Token,
+	): Promise<{ results: Record<string, unknown>; authFailed: boolean }> {
+		const results: Record<string, unknown> = {};
+		let authFailed = false;
+		await Promise.all(keys.map(async (key) => {
+			const build = this.endpoints[key];
+			if (!build) return;
+			try {
+				const { status, data } = await this.apiGet(build(dn, date), oauth2);
+				if (status >= 200 && status < 300 && data != null) {
+					results[key] = this.transformResponse(key, data);
+				} else if (isAuthFailureStatus(status)) {
+					authFailed = true;
+					console.debug(`Garmin Health Sync: endpoint ${key} → auth failure ${status}`);
+				} else if (status !== 200) {
+					console.debug(`Garmin Health Sync: endpoint ${key} → status ${status} (übersprungen)`);
+				}
+			} catch (e) {
+				console.debug(`Garmin Health Sync: endpoint ${key} fetch error:`, e);
+			}
+		}));
+		return { results, authFailed };
 	}
 
 	/** Same response transformations as the BrowserWindow interceptor */
@@ -792,134 +470,6 @@ export class GarminApi {
 			return Array.isArray(data) ? data[0] : data;
 		}
 		return data;
-	}
-
-	/** Fetch specific endpoints via direct fetch (used to supplement navigation results) */
-	private async fetchEndpointsDirect(date: string, endpointKeys: string[]): Promise<Record<string, unknown>> {
-		const dn = this.session!.displayName;
-
-		// Check if we have CSRF headers (should be captured by now from the page load)
-		const headersJson = await this.browserWindow!.webContents.executeJavaScript(
-			`JSON.stringify(window.__hs_apiHeaders || null)`
-		);
-		if (!headersJson || headersJson === "null") {
-			console.debug("Garmin Health Sync: No CSRF token available for supplemental fetch");
-			return {};
-		}
-
-		const fetchCalls = endpointKeys.map(key => {
-			const buildUrl = this.endpoints[key];
-			if (!buildUrl) return `Promise.resolve({ key: ${JSON.stringify(key)}, status: 0, data: null })`;
-			const url = buildUrl(dn, date);
-			return `fetch(${JSON.stringify(url)}, { headers: Object.assign({}, window.__hs_apiHeaders, { "NK": "NT", "Accept": "application/json" }) })
-				.then(r => r.ok ? r.json().then(d => ({ key: ${JSON.stringify(key)}, status: r.status, data: d }))
-					: ({ key: ${JSON.stringify(key)}, status: r.status, data: null }))
-				.catch(e => ({ key: ${JSON.stringify(key)}, status: -1, data: null, error: String(e) }))`;
-		});
-
-		const code = `Promise.all([${fetchCalls.join(",")}]).then(r => JSON.stringify(r))`;
-
-		const TIMEOUT_MS = 10000;
-		const timeout = new Promise<never>((_, reject) =>
-			setTimeout(() => reject(new Error(`Supplemental fetch timeout ${TIMEOUT_MS}ms`)), TIMEOUT_MS));
-
-		try {
-			const rawJson = await Promise.race([
-				this.browserWindow!.webContents.executeJavaScript(code),
-				timeout
-			]);
-
-			const entries = JSON.parse(rawJson) as Array<{ key: string; status: number; data: unknown; error?: string }>;
-			const results: Record<string, unknown> = {};
-			const authFailed: string[] = [];
-
-			for (const entry of entries) {
-				if (entry.data != null && typeof entry.data === "object" && Object.keys(entry.data as Record<string, unknown>).length > 0) {
-					results[entry.key] = this.transformResponse(entry.key, entry.data);
-				} else if (Array.isArray(entry.data)) {
-					// Activities endpoint returns an array — could be empty [] for days without workouts
-					results[entry.key] = this.transformResponse(entry.key, entry.data);
-				} else if (this.isAuthFailureStatus(entry.status)) {
-					authFailed.push(entry.key);
-				}
-			}
-
-			if (authFailed.length > 0) {
-				console.debug("Garmin Health Sync: Supplemental fetch — auth-limited endpoints:", authFailed.join(", "));
-			}
-			return results;
-		} catch (e) {
-			console.debug("Garmin Health Sync: Supplemental fetch failed:", e);
-			return {};
-		}
-	}
-
-	/** Fallback: navigate BrowserWindow to the daily summary page + interceptor */
-	private async fetchViaNavigation(date: string): Promise<Record<string, unknown>> {
-		// Reset collected responses
-		await this.browserWindow!.webContents.executeJavaScript(`window.__hs_responses = {};`);
-
-		// Re-inject interceptor (in case page context was lost)
-		this.injectInterceptor(this.browserWindow!);
-
-		// Navigate to daily summary page for the requested date
-		const url = `${this.urls.appBase}/daily-summary/${date}`;
-		console.debug("Garmin Health Sync: Navigating to", url);
-		await this.browserWindow!.loadURL(url).catch(() => {});
-
-		// Wait until the app has made its API calls
-		const maxWait = 15000;
-		const pollMs = 1000;
-		let waited = 0;
-
-		while (waited < maxWait) {
-			await new Promise(r => setTimeout(r, pollMs));
-			waited += pollMs;
-
-			try {
-				const hasData = await this.browserWindow!.webContents.executeJavaScript(`
-					Object.keys(window.__hs_responses || {}).length
-				`);
-				if (Number(hasData) >= 3) {
-					await new Promise(r => setTimeout(r, 3000));
-					break;
-				}
-			} catch {
-				// Window navigating
-			}
-		}
-
-		// Read all collected responses
-		const rawJson = await this.browserWindow!.webContents.executeJavaScript(`
-			JSON.stringify(window.__hs_responses || {})
-		`);
-
-		const responses = JSON.parse(rawJson) as Record<string, unknown>;
-		const currentUrl = this.browserWindow!.webContents.getURL();
-		if (currentUrl.startsWith(this.urls.ssoSignin)) {
-			throw new LoginRequiredError();
-		}
-		console.debug("Garmin Health Sync: Navigation fetch keys:", Object.keys(responses).join(", "));
-
-		for (const [key, value] of Object.entries(responses)) {
-			console.debug(`Garmin Health Sync: Navigation [${key}]`, JSON.stringify(value).substring(0, 150));
-		}
-
-		// Supplement: fetch any required endpoints the page didn't trigger (e.g. activities)
-		const missing = (this.requiredEndpoints ?? Object.keys(this.endpoints))
-			.filter(k => !(k in responses) && k in this.endpoints);
-		if (missing.length > 0) {
-			console.debug("Garmin Health Sync: Navigation missed endpoints, supplementing:", missing.join(", "));
-			const supplemented = await this.fetchEndpointsDirect(date, missing);
-			for (const [key, value] of Object.entries(supplemented)) {
-				responses[key] = value;
-			}
-			if (Object.keys(supplemented).length > 0) {
-				console.debug("Garmin Health Sync: Supplemented keys:", Object.keys(supplemented).join(", "));
-			}
-		}
-
-		return responses;
 	}
 
 	// --- Legacy API methods (now bundled via fetchDataForDate) ---
@@ -1029,15 +579,7 @@ export class GarminApi {
 		this.cachedData = {};
 	}
 
-	private isAuthFailureStatus(status: number): boolean {
-		return status === 401;
-	}
-
 	// --- Helpers ---
-
-	refreshDisplayName(): string {
-		return this.session?.displayName || "";
-	}
 
 	private buildUrl(base: string, params: Record<string, string>): string {
 		const url = new URL(base);
