@@ -31,6 +31,11 @@ export class GarminProvider implements HealthProvider {
 		await this.api.clearSession();
 	}
 
+	/** Schließt ein evtl. offenes Login-Fenster (F12: aus dem Plugin-onunload). */
+	closeActiveLogin(): void {
+		this.api.closeActiveLogin();
+	}
+
 	isConfigured(): boolean {
 		// BrowserWindow login requires no pre-configured credentials
 		return true;

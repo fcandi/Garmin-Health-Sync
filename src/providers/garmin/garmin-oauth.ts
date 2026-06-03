@@ -19,8 +19,10 @@ import { GarminAuthError } from "../../errors";
 // URL des öffentlichen Consumer-Key-Endpunkts (garth-Stil, kein Auth nötig)
 const CONSUMER_URL = "https://thegarth.s3.amazonaws.com/oauth_consumer.json";
 
-// User-Agent für alle OAuth-Aufrufe (Android-Client, Garmin-Erwartung)
-const OAUTH_UA = "com.garmin.android.apps.connectmobile";
+// User-Agent für alle OAuth-Aufrufe (Android-Client, Garmin-Erwartung).
+// Exportiert, damit garmin-api.ts denselben String für die Bearer-Aufrufe nutzt
+// (single source of truth statt doppelter Konstante).
+export const OAUTH_UA = "com.garmin.android.apps.connectmobile";
 
 // ---------------------------------------------------------------------------
 // Exportierte Interfaces
@@ -207,11 +209,13 @@ export async function getConsumer(): Promise<Consumer> {
  * Math.floor(Date.now() / 1000) verwenden.
  */
 export function withExpirations(token: OAuth2Token, nowSeconds: number): OAuth2Token {
-	token.expires_at = nowSeconds + token.expires_in;
+	// Kopie statt In-place-Mutation: ein erneuter Aufruf auf demselben Objekt
+	// würde sonst expires_at doppelt verlängern (now + bereits-absolutes expires_at).
+	const result: OAuth2Token = { ...token, expires_at: nowSeconds + token.expires_in };
 	if (token.refresh_token_expires_in !== undefined) {
-		token.refresh_token_expires_at = nowSeconds + token.refresh_token_expires_in;
+		result.refresh_token_expires_at = nowSeconds + token.refresh_token_expires_in;
 	}
-	return token;
+	return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,9 +312,12 @@ export async function exchange(
 	const body: Record<string, string> = {};
 	if (opts?.login === true) {
 		body["audience"] = "GARMIN_CONNECT_MOBILE_ANDROID_DI";
-	}
-	if (oauth1.mfa_token) {
-		body["mfa_token"] = oauth1.mfa_token;
+		// mfa_token NUR beim initialen Login mitsenden. Garmin behandelt es als
+		// einmalig; bei jedem Silent-Refresh mitgeschickt würde es 401/403
+		// provozieren und den Nutzer fälschlich ausloggen (garth-Semantik).
+		if (oauth1.mfa_token) {
+			body["mfa_token"] = oauth1.mfa_token;
+		}
 	}
 
 	// OAuth1-Header für POST MIT Token und Body-Parametern

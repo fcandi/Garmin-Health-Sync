@@ -12,6 +12,7 @@ const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between re-syncs per date
 const FIRST_RESYNC_AFTER_MS = 30 * 60 * 1000; // 30min — first re-sync happens sooner
 const NO_DATA_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1h cooldown for dates that returned no data
 const CLEANUP_AGE_MS = 8 * 24 * 60 * 60 * 1000;
+const LOGIN_NOTICE_THROTTLE_MS = 10 * 60 * 1000; // 10min: re-show login notice no more often than this
 
 export default class HealthSyncPlugin extends Plugin {
 	settings: HealthSyncSettings;
@@ -20,6 +21,7 @@ export default class HealthSyncPlugin extends Plugin {
 	private autoSyncRunning = false;
 	private lastAutoSyncAttempt = 0;
 	private loginRequiredNotice: Notice | null = null;
+	private lastLoginNoticeAt = 0;
 
 	async onload() {
 		await this.loadSettings();
@@ -30,7 +32,7 @@ export default class HealthSyncPlugin extends Plugin {
 
 		// Restore persisted OAuth tokens; migrate legacy cookie users (M6)
 		this.restoreTokens();
-		this.migrateLegacySession();
+		await this.migrateLegacySession();
 
 		this.syncManager = new SyncManager(this.app, this.garminProvider);
 
@@ -48,10 +50,22 @@ export default class HealthSyncPlugin extends Plugin {
 			callback: () => {
 				new BackfillModal(this.app, this.settings.language, (from, to) => {
 					void (async () => {
-						await this.syncManager.backfill(from, to, this.settings);
-						// Token könnten sich beim Backfill refresht haben → persistieren.
-						this.saveTokens();
-						await this.saveSettings();
+						try {
+							await this.syncManager.backfill(from, to, this.settings);
+						} catch (error) {
+							// F6: auch im Fehlerfall persistieren (s.u.) und bei totem
+							// Token die Re-Login-Notice zeigen, statt stillschweigend
+							// das tote OAuth1-Token auf Disk zu lassen.
+							if (isLoginRequiredError(error) || this.garminProvider.getAuthState() === "needsUserLogin") {
+								this.showGarminLoginRequiredNotice("backfill login_required");
+							} else {
+								console.debug("Garmin Health Sync: Backfill failed — transient", error);
+							}
+						} finally {
+							// Token könnten sich beim Backfill refresht/invalidiert haben → persistieren.
+							this.saveTokens();
+							await this.saveSettings();
+						}
 					})();
 				}).open();
 			},
@@ -73,6 +87,12 @@ export default class HealthSyncPlugin extends Plugin {
 				}
 			})
 		);
+	}
+
+	/** F12: Beim Deaktivieren/Neuladen ein evtl. noch offenes Garmin-Login-Fenster
+	 *  schließen, statt es bis zum 120s-Timeout sichtbar offen zu lassen. */
+	onunload(): void {
+		this.garminProvider?.closeActiveLogin();
 	}
 
 	/** Auto-sync — checks the last 7 days, syncs missing or outdated data */
@@ -251,6 +271,7 @@ export default class HealthSyncPlugin extends Plugin {
 				new Notice(t("noticeLoginSuccess", lang));
 				// Frischer Login → State-Machine ist ready; sofort einen Sync anstoßen.
 				this.lastAutoSyncAttempt = 0;
+				this.lastLoginNoticeAt = 0; // Throttle zurücksetzen: künftige Fehler sofort melden
 				void this.tryAutoSync();
 			} else {
 				new Notice(t("noticeLoginFailed", lang));
@@ -352,16 +373,27 @@ export default class HealthSyncPlugin extends Plugin {
 	/** M6: Bestandsnutzer mit alter Cookie-Session (aber ohne OAuth1) einmalig zum
 	 *  Neu-Anmelden auffordern und das Legacy-Feld leeren, damit die Notice nicht
 	 *  erneut erscheint. Der Re-Login läuft dann über den neuen OAuth-Flow. */
-	private migrateLegacySession(): void {
+	private async migrateLegacySession(): Promise<void> {
 		if (this.settings.garminSession && !this.settings.garminOAuth1) {
 			new Notice(t("noticeMigrationReloginRequired", this.settings.language), 0);
 			this.settings.garminSession = "";
-			void this.saveSettings();
+			// F10: await, damit der Disk-Write abgeschlossen ist — sonst erscheint die
+			// Migrations-Notice bei einem Crash vor dem Write bei jedem Start erneut.
+			await this.saveSettings();
 		}
 	}
 
 	private showGarminLoginRequiredNotice(reason: string): void {
 		console.debug(`Garmin Health Sync: Login required — ${reason}`);
+		// F3 + Review-A: zeitbasiertes Throttle statt binärem Guard. Verhindert eine
+		// neue Notice bei jeder Daily-Note-Öffnung, zeigt aber nach Ablauf des Fensters
+		// wieder eine — auch wenn der Nutzer die letzte manuell (X) geschlossen hat.
+		// Ein binärer `if (loginRequiredNotice) return` bliebe sonst für immer aktiv
+		// (Notice via X geschlossen → Referenz bleibt non-null → Auto-Sync stumm pausiert).
+		const now = Date.now();
+		if (now - this.lastLoginNoticeAt < LOGIN_NOTICE_THROTTLE_MS) return;
+		this.lastLoginNoticeAt = now;
+
 		if (this.loginRequiredNotice) {
 			this.loginRequiredNotice.hide();
 			this.loginRequiredNotice = null;
@@ -391,10 +423,10 @@ export default class HealthSyncPlugin extends Plugin {
 		await this.loginViaBrowser();
 
 		if (this.garminProvider.isSessionValid() && this.garminProvider.getAuthState() !== "needsUserLogin") {
+			// Review-C: loginViaBrowser() hat bei Erfolg bereits einen Auto-Sync
+			// angestoßen — hier nur die Notice schließen, kein zweiter tryAutoSync.
 			notice.hide();
 			if (this.loginRequiredNotice === notice) this.loginRequiredNotice = null;
-			this.lastAutoSyncAttempt = 0;
-			void this.tryAutoSync();
 			return;
 		}
 
