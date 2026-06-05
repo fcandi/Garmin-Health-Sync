@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.9
+
+Maintenance release. No functional changes — internal cleanups to comply with the Obsidian plugin guidelines.
+
+### Changed
+
+- Raised the minimum required Obsidian version to 1.5.4. The plugin already relied on APIs introduced in that version (`Vault.createFolder`), so this only makes the existing requirement explicit.
+- Internal: use `activeDocument` and `window.setTimeout` instead of the global `document` / `setTimeout` for popout-window compatibility.
+
 ## 0.9.8
 
 This update changes how the plugin signs in to Garmin. Instead of a browser session that quietly expired after a couple of hours, it now uses Garmin's official sign-in tokens — so your connection stays alive far longer and keeps refreshing itself in the background.

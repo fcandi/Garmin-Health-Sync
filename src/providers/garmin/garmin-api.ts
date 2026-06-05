@@ -302,7 +302,7 @@ export class GarminApi {
 
 				// Timeout: brief breadcrumb showing which page the login stalled on
 				// (without query/ticket, without HTML dump).
-				setTimeout(() => {
+				window.setTimeout(() => {
 					if (done) return;
 					void win.webContents.executeJavaScript(
 						`(function(){return JSON.stringify({url:(location.href||"").split("?")[0],title:document.title});})()`
@@ -617,7 +617,7 @@ export class GarminApi {
 		const withTimeout = Promise.race([
 			this.fetchDataForDate(date, seq),
 			new Promise<never>((_, reject) =>
-				setTimeout(() => reject(new Error("fetch timeout")), FETCH_TIMEOUT_MS)
+				window.setTimeout(() => reject(new Error("fetch timeout")), FETCH_TIMEOUT_MS)
 			),
 		]);
 

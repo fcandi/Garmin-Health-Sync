@@ -342,7 +342,7 @@ export default class HealthSyncPlugin extends Plugin {
 
 		// Detect language from Obsidian on first launch
 		if (!saved?.language) {
-			const obsidianLang = document.documentElement.lang?.slice(0, 2) ?? "en";
+			const obsidianLang = activeDocument.documentElement.lang?.slice(0, 2) ?? "en";
 			const supported = ["en", "de", "zh", "ja", "es", "fr"];
 			this.settings.language = supported.includes(obsidianLang) ? obsidianLang : "en";
 		}
@@ -399,13 +399,13 @@ export default class HealthSyncPlugin extends Plugin {
 			this.loginRequiredNotice = null;
 		}
 
-		const fragment = document.createDocumentFragment();
-		const wrapper = document.createElement("div");
-		const message = document.createElement("div");
+		const fragment = activeDocument.createDocumentFragment();
+		const wrapper = activeDocument.createElement("div");
+		const message = activeDocument.createElement("div");
 		message.textContent = t("noticeSessionExpired", this.settings.language);
 		wrapper.appendChild(message);
 
-		const button = document.createElement("button");
+		const button = activeDocument.createElement("button");
 		button.textContent = t("noticeLoginAction", this.settings.language);
 		wrapper.appendChild(button);
 
@@ -484,7 +484,7 @@ export default class HealthSyncPlugin extends Plugin {
 	}
 
 	private sleep(ms: number): Promise<void> {
-		return new Promise(resolve => setTimeout(resolve, ms));
+		return new Promise(resolve => window.setTimeout(resolve, ms));
 	}
 }
 

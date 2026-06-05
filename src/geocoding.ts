@@ -27,7 +27,7 @@ function cleanMultiscript(text: string): string {
  */
 export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
 	try {
-		const lang = document.documentElement.lang?.slice(0, 2) || "en";
+		const lang = activeDocument.documentElement.lang?.slice(0, 2) || "en";
 		const url = `${NOMINATIM_URL}?lat=${lat}&lon=${lon}&format=json&zoom=14&accept-language=${lang}`;
 		const response = await requestUrl({
 			url,
