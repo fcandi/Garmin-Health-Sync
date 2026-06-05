@@ -4,6 +4,10 @@
 
 Maintenance release. No functional changes — internal cleanups to comply with the Obsidian plugin guidelines.
 
+### If you're updating from before 0.9.8
+
+Carried over from 0.9.8: the plugin now signs in to Garmin with official sign-in tokens instead of a browser session, so your connection stays alive far longer and refreshes itself in the background. **You'll need to log in to Garmin once** after updating — after that it just keeps going. (Full details in the 0.9.8 notes below.)
+
 ### Changed
 
 - Raised the minimum required Obsidian version to 1.5.4. The plugin already relied on APIs introduced in that version (`Vault.createFolder`), so this only makes the existing requirement explicit.
