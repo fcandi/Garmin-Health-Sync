@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.8-beta.1
+## 0.9.8
 
 This update changes how the plugin signs in to Garmin. Instead of a browser session that quietly expired after a couple of hours, it now uses Garmin's official sign-in tokens — so your connection stays alive far longer and keeps refreshing itself in the background.
 
