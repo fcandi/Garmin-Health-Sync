@@ -8,10 +8,12 @@ const { minAppVersion } = manifest;
 manifest.version = targetVersion;
 writeFileSync("manifest.json", JSON.stringify(manifest, null, "\t"));
 
-// update versions.json with target version and minAppVersion from manifest.json
-// but only if the target version is not already in versions.json
+// update versions.json with target version and minAppVersion from manifest.json,
+// but only for stable releases (versions.json maps store versions → minAppVersion).
+// Prerelease tags (x.y.z-beta.N) must never land here; skip anything with a `-`.
+const isPrerelease = targetVersion.includes("-");
 const versions = JSON.parse(readFileSync('versions.json', 'utf8'));
-if (!(targetVersion in versions)) {
+if (!isPrerelease && !(targetVersion in versions)) {
     versions[targetVersion] = minAppVersion;
     writeFileSync('versions.json', JSON.stringify(versions, null, '\t'));
 }

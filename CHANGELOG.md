@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.10-beta.1
+
+### Fixed
+
+- Garmin login could fail right after entering your credentials, leaving you on a
+  page showing `{serviceUrl: …, serviceTicket: 'ST-…'}` (issue #6). Your sign-in had
+  actually succeeded — the plugin just didn't recognise the login ticket in that
+  form. Ticket detection is now broader and re-checks on in-page navigations, so the
+  login completes reliably.
+
+### Internal
+
+- Login logs now include the plugin version and a redacted diagnostic breadcrumb to
+  make bug reports easier to act on.
+
 ## 0.9.9
 
 Maintenance release. No functional changes — internal cleanups to comply with the Obsidian plugin guidelines.
