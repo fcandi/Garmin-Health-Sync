@@ -134,10 +134,17 @@ export class GarminApi {
 	// Concurrency guards: in-flight login (F9) and open login window (F12).
 	private loginPromise: Promise<{ ok: boolean; detail: string }> | null = null;
 	private activeLoginWindow: BrowserWindowType | null = null;
+	// Plugin version for self-identifying login/diagnostic logs (set from main.ts).
+	private pluginVersion = "";
 
 	setRegion(region: ServerRegion): void {
 		this.urls = getRegionUrls(region);
 		this.endpoints = getEndpoints(this.urls.apiBase);
+	}
+
+	/** Records the plugin version so login debug logs are self-identifying in bug reports. */
+	setVersion(version: string): void {
+		this.pluginVersion = version;
 	}
 
 	/** Sets the persisted OAuth tokens (on restore/login). */
@@ -205,6 +212,7 @@ export class GarminApi {
 
 	private async doLoginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
 		const silent = opts.silent ?? false;
+		console.debug(`Garmin Health Sync: starting OAuth login (plugin v${this.pluginVersion || "?"}, region=${this.urls.domain}, silent=${silent})`);
 		const BrowserWindow = this.getBrowserWindowConstructor();
 		const embed = this.urls.ssoEmbed;
 		// Proven configuration (gate + E2E): embedWidget=true with service=…/sso/embed
@@ -233,15 +241,20 @@ export class GarminApi {
 		});
 		this.activeLoginWindow = win;   // F12: handle for closeActiveLogin() on plugin unload
 
-		// JS that searches the page/URL for an ST ticket (no regex backslash → template-safe).
+		// JS that searches the page/URL for a CAS service ticket. Garmin surfaces the
+		// ticket in several shapes depending on account/region/MFA: the embed redirect
+		// `…/sso/embed?ticket=ST-…`, an `embed?ticket=ST-…` link in the page HTML, or a
+		// raw success payload `{serviceUrl: …, serviceTicket: 'ST-…'}` (issue #6). A single
+		// `ST-…` regex over the URL + serialized DOM matches all of them — more robust
+		// than the previous `ticket=` substring scan, which missed the JSON form.
+		// (Char-class regex only, no backslash escapes → safe inside this template.)
 		const scrapeJs =
 			`(function(){try{` +
 			`var loc=(location&&location.search)||"";` +
-			`if(loc.indexOf("ticket=")>=0){var p=new URLSearchParams(loc).get("ticket");if(p)return p;}` +
+			`if(loc.indexOf("ticket=")>=0){var p=new URLSearchParams(loc).get("ticket");if(p&&p.indexOf("ST-")===0)return p;}` +
 			`var h=document.documentElement?document.documentElement.outerHTML:"";` +
-			`var key="embed?ticket=";var i=h.indexOf(key);if(i<0){key="ticket=";i=h.indexOf(key);}` +
-			`if(i<0)return "";var rest=h.slice(i+key.length);var end=rest.search(/[^A-Za-z0-9._-]/);` +
-			`return end<0?rest:rest.slice(0,end);}catch(e){return "";}})()`;
+			`var m=h.match(/ST-[0-9A-Za-z._-]+/);` +
+			`return m?m[0]:"";}catch(e){return "";}})()`;
 
 		const timeoutMs = silent ? 30000 : 120000;
 
@@ -258,17 +271,27 @@ export class GarminApi {
 					resolve(t);
 				};
 
-				// (a) Ticket from a navigation URL (any URL containing ?ticket=…).
+				// (a) Ticket from a navigation URL. Accept both the documented redirect
+				// `?ticket=ST-…` and a bare `ST-…` token anywhere in the URL — some flows
+				// carry the ticket outside the `ticket` query parameter (issue #6).
 				const onNav = (...args: unknown[]): void => {
+					if (done) return;
 					const url = findUrlInArgs(args);
-					if (done || !url || !url.includes("ticket=")) return;
+					if (!url) return;
+					let tk: string | null = null;
 					try {
-						const tk = new URL(url).searchParams.get("ticket");
-						if (tk && tk.length > 4) {
-							console.debug(`Garmin Health Sync: M1 — ticket in nav URL (${new URL(url).host}):`, tk.slice(0, 14) + "…");
-							finish({ value: tk, via: "redirect" });
-						}
+						tk = new URL(url).searchParams.get("ticket");
 					} catch { /* not a valid URL */ }
+					if (!tk) {
+						const m = url.match(/ST-[0-9A-Za-z._-]+/);
+						if (m) tk = m[0];
+					}
+					if (tk && tk.length > 4) {
+						let host = "";
+						try { host = new URL(url).host; } catch { /* keep empty */ }
+						console.debug(`Garmin Health Sync: M1 — ticket in nav URL (${host}):`, tk.slice(0, 14) + "…");
+						finish({ value: tk, via: "redirect" });
+					}
 				};
 				for (const ev of ["will-redirect", "did-redirect-navigation", "did-navigate", "did-navigate-in-page", "did-start-navigation"]) {
 					win.webContents.on(ev, onNav);
@@ -292,7 +315,12 @@ export class GarminApi {
 						}
 					}).catch(() => { /* window is navigating */ });
 				};
-				for (const ev of ["did-stop-loading", "dom-ready"]) {
+				// Re-scrape on navigation as well, not only on load completion: some flows
+				// reveal the ticket via an in-page navigation that fires neither
+				// did-stop-loading nor dom-ready again (issue #6). Still strictly
+				// event-driven — no continuous polling, so the old setInterval violation
+				// (the reason this replaced the 1s poll) stays gone.
+				for (const ev of ["did-stop-loading", "dom-ready", "did-navigate", "did-navigate-in-page"]) {
 					win.webContents.on(ev, scrapeOnce);
 				}
 
@@ -304,10 +332,15 @@ export class GarminApi {
 				// (without query/ticket, without HTML dump).
 				window.setTimeout(() => {
 					if (done) return;
+					// Diagnostic breadcrumb: URL (no query), title, and a redacted body
+					// snippet so bug reports show WHICH page the login stalled on (e.g. the
+					// issue #6 serviceTicket JSON) without leaking the ticket itself.
 					void win.webContents.executeJavaScript(
-						`(function(){return JSON.stringify({url:(location.href||"").split("?")[0],title:document.title});})()`
+						`(function(){try{var b=document.body?(document.body.innerText||""):"";` +
+						`b=b.replace(/ST-[0-9A-Za-z._-]+/g,"ST-<redacted>").slice(0,300);` +
+						`return JSON.stringify({url:(location.href||"").split("?")[0],title:document.title,body:b});}catch(e){return "";}})()`
 					).then((raw: unknown) => {
-						console.debug("Garmin Health Sync: login timed out without a ticket. Page:", typeof raw === "string" ? raw : "(none)");
+						console.debug(`Garmin Health Sync: login timed out without a ticket (plugin v${this.pluginVersion || "?"}). Page:`, typeof raw === "string" ? raw : "(none)");
 					}).catch(() => { /* window may already be destroyed */ }).then(() => finish(null));
 				}, timeoutMs);
 
@@ -319,7 +352,7 @@ export class GarminApi {
 
 			if (!ticket) {
 				console.debug("Garmin Health Sync: M1 — no service ticket captured (timeout or sign-in incomplete)");
-				return { ok: false, detail: "no_ticket" };
+				return { ok: false, detail: `no_ticket (plugin v${this.pluginVersion || "?"})` };
 			}
 			console.debug(`Garmin Health Sync: M1 — service ticket captured via ${ticket.via}:`, ticket.value.slice(0, 14) + "…");
 
@@ -339,7 +372,7 @@ export class GarminApi {
 			console.error("Garmin Health Sync: M1 — OAuth login failed:", e);
 			const status = e && typeof e === "object" && "status" in e ? (e as { status: number }).status : undefined;
 			const msg = e instanceof Error ? e.message : String(e);
-			return { ok: false, detail: `error${status != null ? " status=" + status : ""}: ${msg}` };
+			return { ok: false, detail: `error${status != null ? " status=" + status : ""} (plugin v${this.pluginVersion || "?"}): ${msg}` };
 		} finally {
 			if (!win.isDestroyed()) win.close();
 			this.activeLoginWindow = null;

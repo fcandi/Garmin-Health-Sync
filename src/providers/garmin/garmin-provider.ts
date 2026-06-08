@@ -27,6 +27,11 @@ export class GarminProvider implements HealthProvider {
 		this.api.setRegion(region);
 	}
 
+	/** Records the plugin version for self-identifying login/diagnostic logs. */
+	setVersion(version: string): void {
+		this.api.setVersion(version);
+	}
+
 	async clearSession(): Promise<void> {
 		await this.api.clearSession();
 	}

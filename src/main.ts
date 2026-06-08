@@ -28,6 +28,7 @@ export default class HealthSyncPlugin extends Plugin {
 		this.autoDetectDailyNotePath();
 
 		this.garminProvider = new GarminProvider();
+		this.garminProvider.setVersion(this.manifest.version);
 		this.applyServerRegion();
 
 		// Restore persisted OAuth tokens; migrate legacy cookie users (M6)
