@@ -4,6 +4,7 @@ export const fr: Record<TranslationKeys, string> = {
 	// Commands
 	commandSync: "Synchroniser la note active",
 	commandBackfill: "Remplir les données de santé",
+	commandManualLogin: "Se connecter avec un ticket de service",
 
 	// Settings
 	settingsServerRegion: "Région du serveur",
@@ -15,6 +16,7 @@ export const fr: Record<TranslationKeys, string> = {
 	settingsGarminPaused: "Session enregistrée — synchronisation automatique en pause après une erreur d'authentification",
 	settingsGarminLoggedOut: "Non connecté",
 	settingsGarminLogout: "Déconnexion",
+	settingsGarminManualLogin: "Connexion manuelle",
 	settingsGarminSessionPrivacyDesc: "Vos jetons de connexion Garmin sont stockés dans les données locales du plugin Obsidian pour restaurer la connexion ; traitez-les comme un jeton de connexion",
 	settingsAutoSync: "Synchroniser la note quotidienne automatiquement",
 	settingsAutoSyncDesc: "Synchroniser les données de santé une fois au démarrage d'Obsidian",
@@ -85,10 +87,25 @@ export const fr: Record<TranslationKeys, string> = {
 	noticeAutoSyncDone: "Données de santé synchronisées — {count} jours mis à jour",
 	noticeBackfillStart: "Début du remplissage...",
 	noticeBackfillDone: "Remplissage terminé : {count} jours mis à jour",
+	noticeManualLoginFailed: "Échec de la connexion manuelle — aucun ticket valide trouvé ou ticket expiré. Les tickets sont à usage unique et expirent vite ; reconnectez-vous et collez le nouveau immédiatement.",
 
 	// Backfill Modal
 	modalBackfillTitle: "Remplir les données de santé",
 	modalBackfillFrom: "Du",
 	modalBackfillTo: "Au",
 	modalBackfillStart: "Lancer le remplissage",
+
+	// Manual Login Modal (issue #6 fallback)
+	modalManualLoginTitle: "Connexion Garmin manuelle",
+	modalManualLoginIntro: "Si la fenêtre de connexion normale n'aboutit pas (elle reste sur le formulaire ou ouvre le navigateur du système), vous pouvez terminer la connexion manuellement :",
+	modalManualLoginStep1: "Ouvrez la page de connexion Garmin dans votre navigateur web et connectez-vous.",
+	modalManualLoginStep2: "Après la connexion, le navigateur affiche une page presque vide dont l'adresse contient 'ticket=ST-…'.",
+	modalManualLoginStep3: "Copiez cette adresse complète (ou seulement la partie ST-…) et collez-la ci-dessous immédiatement — le ticket expire après quelques secondes.",
+	modalManualLoginOpenUrl: "Page de connexion Garmin",
+	modalManualLoginOpenButton: "Ouvrir dans le navigateur",
+	modalManualLoginCopyTooltip: "Copier le lien",
+	modalManualLoginCopied: "Lien de connexion copié dans le presse-papiers",
+	modalManualLoginTicket: "Ticket",
+	modalManualLoginTicketDesc: "Collez ici le ticket ST-… ou l'adresse complète",
+	modalManualLoginSubmit: "Se connecter",
 };

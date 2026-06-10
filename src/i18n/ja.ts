@@ -4,6 +4,7 @@ export const ja: Record<TranslationKeys, string> = {
 	// Commands
 	commandSync: "現在のノートを同期",
 	commandBackfill: "ヘルスデータをバックフィル",
+	commandManualLogin: "サービスチケットでログイン",
 
 	// Settings
 	settingsServerRegion: "サーバーリージョン",
@@ -15,6 +16,7 @@ export const ja: Record<TranslationKeys, string> = {
 	settingsGarminPaused: "セッション保存済み — 認証エラー後に自動同期を一時停止中",
 	settingsGarminLoggedOut: "未接続",
 	settingsGarminLogout: "ログアウト",
+	settingsGarminManualLogin: "手動ログイン",
 	settingsGarminSessionPrivacyDesc: "接続を復元するため、GarminのログイントークンはローカルのObsidianプラグインデータに保存されます。ログイントークンとして扱ってください",
 	settingsAutoSync: "デイリーノートを自動同期",
 	settingsAutoSyncDesc: "Obsidian 起動時にヘルスデータを一度同期",
@@ -85,10 +87,25 @@ export const ja: Record<TranslationKeys, string> = {
 	noticeAutoSyncDone: "ヘルスデータを同期しました — {count} 日分を更新",
 	noticeBackfillStart: "バックフィルを開始...",
 	noticeBackfillDone: "バックフィル完了：{count} 日分を更新",
+	noticeManualLoginFailed: "手動ログインに失敗しました — 有効なチケットが見つからないか、期限切れです。チケットは一度しか使えずすぐに失効します。再度サインインして新しいチケットをすぐに貼り付けてください。",
 
 	// Backfill Modal
 	modalBackfillTitle: "ヘルスデータのバックフィル",
 	modalBackfillFrom: "開始日",
 	modalBackfillTo: "終了日",
 	modalBackfillStart: "バックフィル開始",
+
+	// Manual Login Modal (issue #6 fallback)
+	modalManualLoginTitle: "手動 Garmin ログイン",
+	modalManualLoginIntro: "通常のログインウィンドウが完了しない場合（サインインフォームのまま止まる、またはシステムブラウザが開く場合）、手動でログインを完了できます：",
+	modalManualLoginStep1: "ウェブブラウザで Garmin のサインインページを開いてログインします。",
+	modalManualLoginStep2: "サインイン後、ブラウザにはほぼ空白のページが表示され、そのアドレスに 'ticket=ST-…' が含まれます。",
+	modalManualLoginStep3: "そのアドレス全体（または ST-… の部分のみ）をコピーして、すぐ下に貼り付けてください — チケットは数秒で失効します。",
+	modalManualLoginOpenUrl: "Garmin サインインページ",
+	modalManualLoginOpenButton: "ブラウザで開く",
+	modalManualLoginCopyTooltip: "リンクをコピー",
+	modalManualLoginCopied: "サインインリンクをクリップボードにコピーしました",
+	modalManualLoginTicket: "チケット",
+	modalManualLoginTicketDesc: "ST-… チケットまたはアドレス全体をここに貼り付けてください",
+	modalManualLoginSubmit: "ログイン",
 };

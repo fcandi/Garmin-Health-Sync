@@ -57,6 +57,7 @@ export default tseslint.config(
 					"DOM", "CDN", "FAQ", "AI", "ML",
 					// Project-specific
 					"GPS", "REM", "HRV", "SpO2",
+					"ST", // Garmin CAS service ticket prefix (ST-…), manual-login UI
 				],
 				ignoreRegex: ["garmin\\.(com|cn)"],
 			}],

@@ -4,6 +4,7 @@ export const de: Record<TranslationKeys, string> = {
 	// Commands
 	commandSync: "Aktuelle Notiz synchronisieren",
 	commandBackfill: "Gesundheitsdaten nachträglich auffüllen",
+	commandManualLogin: "Mit Service-Ticket anmelden",
 
 	// Settings
 	settingsServerRegion: "Serverregion",
@@ -15,6 +16,7 @@ export const de: Record<TranslationKeys, string> = {
 	settingsGarminPaused: "Session gespeichert — Auto-Sync nach Auth-Fehler pausiert",
 	settingsGarminLoggedOut: "Nicht verbunden",
 	settingsGarminLogout: "Abmelden",
+	settingsGarminManualLogin: "Manuelle Anmeldung",
 	settingsGarminSessionPrivacyDesc: "Deine Garmin-Login-Token werden lokal in den Obsidian-Plugin-Daten gespeichert, damit die Verbindung wiederhergestellt werden kann; behandle sie wie ein Login-Token",
 	settingsAutoSync: "Gesundheitsdaten automatisch synchronisieren",
 	settingsAutoSyncDesc: "Automatisch die letzten 7 Tage abrufen beim Start von Obsidian",
@@ -86,9 +88,25 @@ export const de: Record<TranslationKeys, string> = {
 	noticeBackfillStart: "Starte Nachsynchronisierung...",
 	noticeBackfillDone: "Nachsynchronisierung abgeschlossen: {count} Tage aktualisiert",
 
+	noticeManualLoginFailed: "Manuelle Anmeldung fehlgeschlagen — kein gültiges Ticket gefunden oder Ticket abgelaufen. Tickets sind nur einmal und kurz gültig; bitte erneut anmelden und das neue Ticket sofort einfügen.",
+
 	// Backfill Modal
 	modalBackfillTitle: "Gesundheitsdaten nachträglich auffüllen",
 	modalBackfillFrom: "Von",
 	modalBackfillTo: "Bis",
 	modalBackfillStart: "Starten",
+
+	// Manual Login Modal (issue #6 fallback)
+	modalManualLoginTitle: "Manuelle Garmin-Anmeldung",
+	modalManualLoginIntro: "Wenn das normale Login-Fenster nicht zum Abschluss kommt (es bleibt auf dem Anmeldeformular stehen oder öffnet den System-Browser), kannst du die Anmeldung manuell abschließen:",
+	modalManualLoginStep1: "Öffne die Garmin-Anmeldeseite in deinem Webbrowser und melde dich an.",
+	modalManualLoginStep2: "Nach der Anmeldung zeigt der Browser eine fast leere Seite, deren Adresse 'ticket=ST-…' enthält.",
+	modalManualLoginStep3: "Kopiere diese vollständige Adresse (oder nur den ST-…-Teil) und füge sie sofort unten ein — das Ticket läuft nach wenigen Sekunden ab.",
+	modalManualLoginOpenUrl: "Garmin-Anmeldeseite",
+	modalManualLoginOpenButton: "Im Browser öffnen",
+	modalManualLoginCopyTooltip: "Link kopieren",
+	modalManualLoginCopied: "Anmelde-Link in die Zwischenablage kopiert",
+	modalManualLoginTicket: "Ticket",
+	modalManualLoginTicketDesc: "Füge hier das ST-…-Ticket oder die vollständige Adresse ein",
+	modalManualLoginSubmit: "Anmelden",
 };

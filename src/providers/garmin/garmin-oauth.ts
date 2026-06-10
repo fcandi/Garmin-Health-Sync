@@ -19,6 +19,15 @@ import { GarminAuthError } from "../../errors";
 // URL of the public consumer key endpoint (garth-style, no auth required)
 const CONSUMER_URL = "https://thegarth.s3.amazonaws.com/oauth_consumer.json";
 
+// Bundled fallback for networks where the S3 endpoint is unreachable while
+// Garmin's own SSO/connectapi hosts are fine (issue #6: AWS S3 blocked in some
+// regions/networks). Same long-stable public mobile-client keys the S3
+// endpoint serves (verified identical 2026-06-10).
+const FALLBACK_CONSUMER: Consumer = {
+	consumer_key: "fc3e99d2-118c-44b8-8ae3-03370dde24c0",
+	consumer_secret: "E08WAR897WEy2knn7aFBrvegVAf0AFdWBBF",
+};
+
 // User-Agent for all OAuth calls (Android client, expected by Garmin).
 // Exported so garmin-api.ts uses the same string for the Bearer calls
 // (single source of truth instead of a duplicated constant).
@@ -179,23 +188,26 @@ export async function oauth1Header(
 /**
  * Fetches the public consumer keys from the Garmin S3 endpoint.
  * No auth required; publicly accessible.
+ *
+ * Any failure (network, HTTP error, malformed body) falls back to the bundled
+ * keys instead of throwing — the S3 host must not be a single point of failure
+ * when Garmin itself is reachable (issue #6).
  */
 export async function getConsumer(): Promise<Consumer> {
-	let response;
 	try {
-		response = await requestUrl({ url: CONSUMER_URL, throw: false });
+		const response = await requestUrl({ url: CONSUMER_URL, throw: false });
+		if (response.status >= 200 && response.status < 300) {
+			const json = response.json as Partial<Consumer> | null;
+			if (json?.consumer_key && json?.consumer_secret) {
+				return json as Consumer;
+			}
+		}
+		console.debug(`Garmin Health Sync: consumer key endpoint returned HTTP ${response.status} or malformed body — using bundled fallback keys`);
 	} catch (e: unknown) {
-		// Network error (DNS, timeout, etc.) → GarminAuthError with status 0
 		const msg = e instanceof Error ? e.message : String(e);
-		throw new GarminAuthError(0, `Loading consumer keys failed (network): ${msg}`);
+		console.debug(`Garmin Health Sync: consumer key fetch failed (${msg}) — using bundled fallback keys`);
 	}
-	if (response.status < 200 || response.status >= 300) {
-		throw new GarminAuthError(
-			response.status,
-			`Loading consumer keys failed: HTTP ${response.status}`,
-		);
-	}
-	return response.json as Consumer;
+	return { ...FALLBACK_CONSUMER };
 }
 
 // ---------------------------------------------------------------------------

@@ -217,18 +217,21 @@ export class GarminApi {
 		}
 	}
 
-	private async doLoginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
-		const silent = opts.silent ?? false;
-		console.debug(`Garmin Health Sync: starting OAuth login (plugin v${this.pluginVersion || "?"}, region=${this.urls.domain}, silent=${silent})`);
-		const BrowserWindow = this.getBrowserWindowConstructor();
+	/** The gauth-widget sign-in URL for the configured region.
+	 *
+	 *  Proven configuration (gate + E2E): embedWidget=true with service=…/sso/embed
+	 *  reliably produces the embed?ticket=ST-… redirect. The `cssUrl` loads Garmin's
+	 *  branding stylesheet (styled form, title "GARMIN Authentication
+	 *  Application"). The logo banner belongs to the host-page chrome and does not
+	 *  appear in the standalone widget — known cosmetic limitation (embedWidget
+	 *  false/true makes no difference; tested 2026-06-03).
+	 *
+	 *  Also surfaced in the manual-ticket fallback (issue #6): completing the same
+	 *  sign-in in an external browser lands on …/sso/embed?ticket=ST-…, which the
+	 *  user pastes back into the plugin. */
+	getSigninUrl(): string {
 		const embed = this.urls.ssoEmbed;
-		// Proven configuration (gate + E2E): embedWidget=true with service=…/sso/embed
-		// reliably produces the embed?ticket=ST-… redirect. The `cssUrl` loads Garmin's
-		// branding stylesheet (styled form, title "GARMIN Authentication
-		// Application"). The logo banner belongs to the host-page chrome and does not
-		// appear in the standalone widget — known cosmetic limitation (embedWidget
-		// false/true makes no difference; tested 2026-06-03).
-		const signinUrl = this.buildUrl(this.urls.ssoSigninWidget, {
+		return this.buildUrl(this.urls.ssoSigninWidget, {
 			id: "gauth-widget",
 			embedWidget: "true",
 			gauthHost: embed,
@@ -238,6 +241,13 @@ export class GarminApi {
 			redirectAfterAccountCreationUrl: embed,
 			cssUrl: `https://connect.${this.urls.domain}/gauth-custom-v1.2-min.css`,
 		});
+	}
+
+	private async doLoginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
+		const silent = opts.silent ?? false;
+		console.debug(`Garmin Health Sync: starting OAuth login (plugin v${this.pluginVersion || "?"}, region=${this.urls.domain}, silent=${silent})`);
+		const BrowserWindow = this.getBrowserWindowConstructor();
+		const signinUrl = this.getSigninUrl();
 
 		const win: BrowserWindowType = new BrowserWindow({
 			width: 500,
@@ -414,19 +424,7 @@ export class GarminApi {
 				return { ok: false, detail: `no_ticket (plugin v${this.pluginVersion || "?"})` };
 			}
 			console.debug(`Garmin Health Sync: M1 — service ticket captured via ${ticket.via}:`, ticket.value.slice(0, 14) + "…");
-
-			// Ticket → OAuth1 → OAuth2 (proves M1 + M2 end-to-end against real Garmin servers).
-			// login-url = …/sso/embed, matching the `service` of the ticket.
-			const consumer = await this.getConsumerCached();
-			const oauth1 = await getOAuth1(ticket.value, consumer, this.urls.domain, this.urls.ssoEmbed);
-			this.oauth1 = oauth1;
-			console.debug("Garmin Health Sync: OAuth1 token obtained (oauth_token:", oauth1.oauth_token.slice(0, 10) + "…)");
-			const oauth2 = await exchange(oauth1, consumer, this.urls.domain, { login: true });
-			this.oauth2 = oauth2;
-			this.displayName = "";          // resolve fresh on (re-)login
-			this.authState.onLogin();        // fresh login → ready, reset backoff
-			console.debug("Garmin Health Sync: OAuth2 token obtained, expires_in:", oauth2.expires_in, "s");
-			return { ok: true, detail: `via=${ticket.via}; oauth1 ok; oauth2 ok; expires_in=${oauth2.expires_in}s` };
+			return await this.exchangeTicket(ticket.value, ticket.via);
 		} catch (e: unknown) {
 			console.error("Garmin Health Sync: M1 — OAuth login failed:", e);
 			const status = e && typeof e === "object" && "status" in e ? (e as { status: number }).status : undefined;
@@ -435,6 +433,45 @@ export class GarminApi {
 		} finally {
 			if (!win.isDestroyed()) win.close();
 			this.activeLoginWindow = null;
+		}
+	}
+
+	/** Ticket → OAuth1 → OAuth2 (proves M1 + M2 end-to-end against real Garmin servers).
+	 *  login-url = …/sso/embed, matching the `service` of the ticket. */
+	private async exchangeTicket(ticket: string, via: string): Promise<{ ok: boolean; detail: string }> {
+		const consumer = await this.getConsumerCached();
+		const oauth1 = await getOAuth1(ticket, consumer, this.urls.domain, this.urls.ssoEmbed);
+		this.oauth1 = oauth1;
+		console.debug("Garmin Health Sync: OAuth1 token obtained (oauth_token:", oauth1.oauth_token.slice(0, 10) + "…)");
+		const oauth2 = await exchange(oauth1, consumer, this.urls.domain, { login: true });
+		this.oauth2 = oauth2;
+		this.displayName = "";          // resolve fresh on (re-)login
+		this.authState.onLogin();        // fresh login → ready, reset backoff
+		console.debug("Garmin Health Sync: OAuth2 token obtained, expires_in:", oauth2.expires_in, "s");
+		return { ok: true, detail: `via=${via}; oauth1 ok; oauth2 ok; expires_in=${oauth2.expires_in}s` };
+	}
+
+	/** Manual-ticket login fallback (issue #6): some Garmin SSO widget variants
+	 *  never surface the service ticket inside the embedded window — the sign-in
+	 *  either stalls silently or escapes to the system browser. Completing the
+	 *  same sign-in (getSigninUrl) in an external browser lands on
+	 *  `…/sso/embed?ticket=ST-…`; the user pastes that URL (or the bare `ST-…`
+	 *  ticket, or the success-JSON containing it) and the regular
+	 *  ticket→OAuth1→OAuth2 exchange runs unchanged. */
+	async loginWithTicket(input: string): Promise<{ ok: boolean; detail: string }> {
+		const m = input.match(/ST-[0-9A-Za-z._-]+/);
+		if (!m) {
+			console.debug("Garmin Health Sync: manual login — no ST- ticket found in input");
+			return { ok: false, detail: "no_ticket_in_input" };
+		}
+		console.debug(`Garmin Health Sync: manual ticket login (plugin v${this.pluginVersion || "?"}, region=${this.urls.domain}):`, m[0].slice(0, 14) + "…");
+		try {
+			return await this.exchangeTicket(m[0], "manual");
+		} catch (e: unknown) {
+			console.error("Garmin Health Sync: manual ticket login failed:", e);
+			const status = e && typeof e === "object" && "status" in e ? (e as { status: number }).status : undefined;
+			const msg = e instanceof Error ? e.message : String(e);
+			return { ok: false, detail: `error${status != null ? " status=" + status : ""} (plugin v${this.pluginVersion || "?"}): ${msg}` };
 		}
 	}
 

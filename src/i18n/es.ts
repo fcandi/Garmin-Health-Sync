@@ -4,6 +4,7 @@ export const es: Record<TranslationKeys, string> = {
 	// Commands
 	commandSync: "Sincronizar nota actual",
 	commandBackfill: "Rellenar datos de salud",
+	commandManualLogin: "Iniciar sesión con ticket de servicio",
 
 	// Settings
 	settingsServerRegion: "Región del servidor",
@@ -15,6 +16,7 @@ export const es: Record<TranslationKeys, string> = {
 	settingsGarminPaused: "Sesión guardada — sincronización automática pausada tras un error de autenticación",
 	settingsGarminLoggedOut: "No conectado",
 	settingsGarminLogout: "Cerrar sesión",
+	settingsGarminManualLogin: "Inicio de sesión manual",
 	settingsGarminSessionPrivacyDesc: "Tus tokens de inicio de sesión de Garmin se guardan en los datos locales del plugin de Obsidian para restaurar la conexión; trátalos como un token de inicio de sesión",
 	settingsAutoSync: "Sincronizar nota diaria automáticamente",
 	settingsAutoSyncDesc: "Sincronizar datos de salud una vez al iniciar Obsidian",
@@ -85,10 +87,25 @@ export const es: Record<TranslationKeys, string> = {
 	noticeAutoSyncDone: "Datos de salud sincronizados — {count} días actualizados",
 	noticeBackfillStart: "Iniciando relleno de datos...",
 	noticeBackfillDone: "Relleno completado: {count} días actualizados",
+	noticeManualLoginFailed: "Inicio de sesión manual fallido — no se encontró un ticket válido o el ticket expiró. Los tickets son de un solo uso y expiran rápido; vuelve a iniciar sesión y pega el nuevo de inmediato.",
 
 	// Backfill Modal
 	modalBackfillTitle: "Rellenar datos de salud",
 	modalBackfillFrom: "Desde",
 	modalBackfillTo: "Hasta",
 	modalBackfillStart: "Iniciar relleno",
+
+	// Manual Login Modal (issue #6 fallback)
+	modalManualLoginTitle: "Inicio de sesión manual de Garmin",
+	modalManualLoginIntro: "Si la ventana de inicio de sesión normal no se completa (se queda en el formulario o abre el navegador del sistema), puedes terminar el inicio de sesión manualmente:",
+	modalManualLoginStep1: "Abre la página de inicio de sesión de Garmin en tu navegador web e inicia sesión.",
+	modalManualLoginStep2: "Tras iniciar sesión, el navegador muestra una página casi vacía cuya dirección contiene 'ticket=ST-…'.",
+	modalManualLoginStep3: "Copia esa dirección completa (o solo la parte ST-…) y pégala abajo de inmediato — el ticket expira en unos segundos.",
+	modalManualLoginOpenUrl: "Página de inicio de sesión de Garmin",
+	modalManualLoginOpenButton: "Abrir en el navegador",
+	modalManualLoginCopyTooltip: "Copiar enlace",
+	modalManualLoginCopied: "Enlace de inicio de sesión copiado al portapapeles",
+	modalManualLoginTicket: "Ticket",
+	modalManualLoginTicketDesc: "Pega aquí el ticket ST-… o la dirección completa",
+	modalManualLoginSubmit: "Iniciar sesión",
 };

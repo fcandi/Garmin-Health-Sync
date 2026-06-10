@@ -4,6 +4,7 @@ export const zh: Record<TranslationKeys, string> = {
 	// Commands
 	commandSync: "同步当前笔记",
 	commandBackfill: "回填健康数据",
+	commandManualLogin: "使用服务票据登录",
 
 	// Settings
 	settingsServerRegion: "服务器区域",
@@ -15,6 +16,7 @@ export const zh: Record<TranslationKeys, string> = {
 	settingsGarminPaused: "会话已保存 — 认证错误后自动同步已暂停",
 	settingsGarminLoggedOut: "未连接",
 	settingsGarminLogout: "退出登录",
+	settingsGarminManualLogin: "手动登录",
 	settingsGarminSessionPrivacyDesc: "您的 Garmin 登录令牌会保存在本地 Obsidian 插件数据中以便恢复连接；请像登录令牌一样保护它们",
 	settingsAutoSync: "自动同步每日笔记",
 	settingsAutoSyncDesc: "Obsidian 启动时自动同步一次健康数据",
@@ -85,10 +87,25 @@ export const zh: Record<TranslationKeys, string> = {
 	noticeAutoSyncDone: "健康数据同步完成 — 已更新 {count} 天",
 	noticeBackfillStart: "开始回填数据...",
 	noticeBackfillDone: "回填完成：已更新 {count} 天",
+	noticeManualLoginFailed: "手动登录失败 — 未找到有效票据或票据已过期。票据仅一次有效且很快过期；请重新登录并立即粘贴新票据。",
 
 	// Backfill Modal
 	modalBackfillTitle: "回填健康数据",
 	modalBackfillFrom: "开始日期",
 	modalBackfillTo: "结束日期",
 	modalBackfillStart: "开始回填",
+
+	// Manual Login Modal (issue #6 fallback)
+	modalManualLoginTitle: "手动 Garmin 登录",
+	modalManualLoginIntro: "如果常规登录窗口无法完成登录（停留在登录表单或打开了系统浏览器），可以手动完成登录：",
+	modalManualLoginStep1: "在网页浏览器中打开 Garmin 登录页面并登录。",
+	modalManualLoginStep2: "登录后浏览器会显示一个几乎空白的页面，其地址包含 'ticket=ST-…'。",
+	modalManualLoginStep3: "复制完整地址（或仅 ST-… 部分）并立即粘贴到下方 — 票据几秒后即失效。",
+	modalManualLoginOpenUrl: "Garmin 登录页面",
+	modalManualLoginOpenButton: "在浏览器中打开",
+	modalManualLoginCopyTooltip: "复制链接",
+	modalManualLoginCopied: "登录链接已复制到剪贴板",
+	modalManualLoginTicket: "票据",
+	modalManualLoginTicketDesc: "在此粘贴 ST-… 票据或完整地址",
+	modalManualLoginSubmit: "登录",
 };

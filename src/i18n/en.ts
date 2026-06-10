@@ -2,6 +2,7 @@ export const en = {
 	// Commands
 	commandSync: "Sync current note",
 	commandBackfill: "Backfill health data",
+	commandManualLogin: "Log in with service ticket",
 
 	// Settings
 	settingsServerRegion: "Server region",
@@ -13,6 +14,7 @@ export const en = {
 	settingsGarminPaused: "Session saved — auto-sync paused after an auth error",
 	settingsGarminLoggedOut: "Not connected",
 	settingsGarminLogout: "Logout",
+	settingsGarminManualLogin: "Manual login",
 	settingsGarminSessionPrivacyDesc: "Your Garmin login tokens are stored in local Obsidian plugin data so the connection can be restored; treat them like a login token",
 	settingsAutoSync: "Auto-sync health data",
 	settingsAutoSyncDesc: "Automatically sync the last 7 days when Obsidian starts",
@@ -84,11 +86,27 @@ export const en = {
 	noticeBackfillStart: "Starting backfill...",
 	noticeBackfillDone: "Backfill complete: {count} days updated",
 
+	noticeManualLoginFailed: "Manual login failed — no valid ticket found or the ticket expired. Tickets are single-use and expire quickly; please sign in again and paste the new one right away.",
+
 	// Backfill Modal
 	modalBackfillTitle: "Backfill health data",
 	modalBackfillFrom: "From",
 	modalBackfillTo: "To",
 	modalBackfillStart: "Start backfill",
+
+	// Manual Login Modal (issue #6 fallback)
+	modalManualLoginTitle: "Manual Garmin login",
+	modalManualLoginIntro: "If the normal login window does not complete (it stays on the sign-in form or opens your system browser), you can finish the login manually:",
+	modalManualLoginStep1: "Open the Garmin sign-in page in your web browser and log in.",
+	modalManualLoginStep2: "After signing in, the browser shows a mostly empty page whose address contains 'ticket=ST-…'.",
+	modalManualLoginStep3: "Copy that full address (or just the ST-… part) and paste it below right away — the ticket expires after a few seconds.",
+	modalManualLoginOpenUrl: "Garmin sign-in page",
+	modalManualLoginOpenButton: "Open in browser",
+	modalManualLoginCopyTooltip: "Copy link",
+	modalManualLoginCopied: "Sign-in link copied to clipboard",
+	modalManualLoginTicket: "Ticket",
+	modalManualLoginTicketDesc: "Paste the ST-… ticket or the full address here",
+	modalManualLoginSubmit: "Log in",
 };
 
 export type TranslationKeys = keyof typeof en;

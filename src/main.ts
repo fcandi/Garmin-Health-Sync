@@ -1,5 +1,6 @@
 import { App, Modal, Notice, Plugin, Setting, TFile } from "obsidian";
 import { DEFAULT_SETTINGS, HealthSyncSettings, HealthSyncSettingTab } from "./settings";
+import { ManualLoginModal } from "./ui/manual-login-modal";
 import { SyncManager } from "./sync";
 import { GarminProvider } from "./providers/garmin/garmin-provider";
 import type { OAuth1Token, OAuth2Token } from "./providers/garmin/garmin-oauth";
@@ -70,6 +71,13 @@ export default class HealthSyncPlugin extends Plugin {
 					})();
 				}).open();
 			},
+		});
+
+		// Command: Manual-ticket login fallback (issue #6)
+		this.addCommand({
+			id: "login-with-ticket",
+			name: t("commandManualLogin", this.settings.language),
+			callback: () => this.openManualLogin(),
 		});
 
 		// Settings Tab
@@ -263,23 +271,55 @@ export default class HealthSyncPlugin extends Plugin {
 
 	/** Interactive OAuth login from settings (opens the Garmin login window). */
 	async loginViaBrowser(): Promise<void> {
-		const lang = this.settings.language;
 		try {
 			const success = await this.garminProvider.authenticate();
-			if (success) {
-				this.saveTokens();
-				await this.saveSettings();
-				new Notice(t("noticeLoginSuccess", lang));
-				// Fresh login → state machine is ready; trigger a sync immediately.
-				this.lastAutoSyncAttempt = 0;
-				this.lastLoginNoticeAt = 0; // reset throttle: report future errors immediately
-				void this.tryAutoSync();
-			} else {
-				new Notice(t("noticeLoginFailed", lang));
-			}
+			await this.handleLoginResult(success, "noticeLoginFailed");
 		} catch (error) {
 			console.error("Garmin Health Sync: OAuth login failed", error);
-			new Notice(t("noticeLoginFailed", lang));
+			new Notice(t("noticeLoginFailed", this.settings.language));
+		}
+	}
+
+	/** Manual-ticket login fallback (issue #6): opens the modal where the user
+	 *  completes the sign-in in an external browser and pastes the ST- ticket. */
+	openManualLogin(onSuccess?: () => void): void {
+		new ManualLoginModal(
+			this.app,
+			this.settings.language,
+			this.garminProvider.getSigninUrl(),
+			async (input) => {
+				const ok = await this.loginWithTicket(input);
+				if (ok) onSuccess?.();
+				return ok;
+			},
+		).open();
+	}
+
+	private async loginWithTicket(input: string): Promise<boolean> {
+		try {
+			const success = await this.garminProvider.authenticateWithTicket(input);
+			await this.handleLoginResult(success, "noticeManualLoginFailed");
+			return success;
+		} catch (error) {
+			console.error("Garmin Health Sync: manual ticket login failed", error);
+			new Notice(t("noticeManualLoginFailed", this.settings.language));
+			return false;
+		}
+	}
+
+	/** Shared post-login handling: persist tokens, notify, kick off a sync. */
+	private async handleLoginResult(success: boolean, failureKey: "noticeLoginFailed" | "noticeManualLoginFailed"): Promise<void> {
+		const lang = this.settings.language;
+		if (success) {
+			this.saveTokens();
+			await this.saveSettings();
+			new Notice(t("noticeLoginSuccess", lang));
+			// Fresh login → state machine is ready; trigger a sync immediately.
+			this.lastAutoSyncAttempt = 0;
+			this.lastLoginNoticeAt = 0; // reset throttle: report future errors immediately
+			void this.tryAutoSync();
+		} else {
+			new Notice(t(failureKey, lang));
 		}
 	}
 

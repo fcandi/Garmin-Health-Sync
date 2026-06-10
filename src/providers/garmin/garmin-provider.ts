@@ -57,6 +57,18 @@ export class GarminProvider implements HealthProvider {
 		return res.ok;
 	}
 
+	/** Sign-in URL for the manual-ticket fallback (opened in an external browser). */
+	getSigninUrl(): string {
+		return this.api.getSigninUrl();
+	}
+
+	/** Manual-ticket login fallback (issue #6): ST- ticket or embed URL pasted by the user. */
+	async authenticateWithTicket(input: string): Promise<boolean> {
+		const res = await this.api.loginWithTicket(input);
+		if (!res.ok) console.debug("Garmin Health Sync: manual ticket login failed —", res.detail);
+		return res.ok;
+	}
+
 	/** Set persisted OAuth tokens (restore on startup). */
 	setTokens(oauth1: OAuth1Token | null, oauth2: OAuth2Token | null): void {
 		this.api.setTokens(oauth1, oauth2);

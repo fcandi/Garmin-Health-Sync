@@ -135,6 +135,13 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 					await this.plugin.loginViaBrowser();
 					this.display();
 				}));
+			// Manual-ticket fallback (issue #6) for accounts where the embedded
+			// login window never completes the sign-in.
+			loginSetting.addButton(btn => btn
+				.setButtonText(t("settingsGarminManualLogin", lang))
+				.onClick(() => {
+					this.plugin.openManualLogin(() => this.display());
+				}));
 		}
 
 		// Auto-Sync
