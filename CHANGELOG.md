@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.10-beta.2
+
+### Fixed
+
+- Garmin login could fail with the sign-in window stuck on the Sign In screen while
+  the ticket page opened in your external browser instead (issue #6). Garmin
+  sometimes completes the login in a new window, which Obsidian forwards to the
+  system browser — out of the plugin's reach. The plugin now keeps that final step
+  inside its own login window, picks the ticket up from Garmin's in-page success
+  event as an additional path, and captures (then closes) any popup that still
+  slips through.
+
 ## 0.9.10-beta.1
 
 ### Fixed

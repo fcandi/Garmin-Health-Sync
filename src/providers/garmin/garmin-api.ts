@@ -191,9 +191,16 @@ export class GarminApi {
 	// === M1: OAuth ticket capture from the BrowserWindow (garth web embed flow) ===
 	// Loads the gauth-widget signin with `service=…/sso/embed`. After a successful
 	// login (+ MFA) the page navigates to `…/sso/embed?ticket=ST-…` — the ticket
-	// is in the URL (and in the HTML). Captured via two paths:
+	// is in the URL (and in the HTML). Captured via four paths:
 	//   (a) Navigation URL containing `ticket=…`  (primary path)
 	//   (b) HTML scrape of the page for `embed?ticket=…`  (fallback)
+	//   (c) postMessage success event, mirrored into the page title  (issue #6)
+	//   (d) URL of a popup window the widget opens  (issue #6)
+	// Some widget variants open the service URL in a NEW browsing context
+	// (window.open / target="_blank") instead of navigating in place; Obsidian
+	// forwards new-window opens to the system browser, where the ticket is lost.
+	// An in-page patch therefore rewires window.open to an in-place navigation
+	// and strips `target` attributes, keeping the final step inside this window.
 	// `preauthorized` (getOAuth1) receives `login-url=…/sso/embed`, matching the
 	// `service`. On failure: navigation URLs (logged live) + HTML diagnostics.
 	// This is the regular interactive login; OAuth2 refresh + data fetching run
@@ -256,6 +263,22 @@ export class GarminApi {
 			`var m=h.match(/ST-[0-9A-Za-z._-]+/);` +
 			`return m?m[0]:"";}catch(e){return "";}})()`;
 
+		// In-page patch (issue #6): keep the final ticket navigation INSIDE this
+		// window. Some accounts get a widget variant that opens the service URL in
+		// a new browsing context (window.open / target="_blank"); Obsidian forwards
+		// new-window opens to the system browser, where the ticket is lost. The
+		// patch rewires window.open to an in-place navigation, strips `target`
+		// attributes on click/submit, and mirrors any postMessage carrying a ticket
+		// into the page title (picked up via "page-title-updated" below — fires
+		// even when no navigation happens at all). Idempotent per document.
+		const patchJs =
+			`(function(){try{if(window.__ghsPatched)return;window.__ghsPatched=true;` +
+			`window.open=function(u){try{if(u)location.href=String(u);}catch(e){}return null;};` +
+			`document.addEventListener("click",function(ev){var n=ev.target;while(n&&n.getAttribute){if(n.getAttribute("target"))n.removeAttribute("target");n=n.parentNode;}},true);` +
+			`document.addEventListener("submit",function(ev){var f=ev.target;if(f&&f.getAttribute&&f.getAttribute("target"))f.removeAttribute("target");},true);` +
+			`window.addEventListener("message",function(ev){try{var d=ev?ev.data:null;var s=typeof d==="string"?d:JSON.stringify(d);var m=s?s.match(/ST-[0-9A-Za-z._-]+/):null;if(m)document.title="GHS_TICKET "+m[0];}catch(e){}});` +
+			`}catch(e){}})()`;
+
 		const timeoutMs = silent ? 30000 : 120000;
 
 		try {
@@ -297,6 +320,35 @@ export class GarminApi {
 					win.webContents.on(ev, onNav);
 				}
 
+				// (d) Should a popup still get created despite the in-page patch
+				// (e.g. window.open captured before the patch ran), pull the ticket
+				// straight from the popup URL — `did-create-window` delivers a
+				// details object with `url`, which findUrlInArgs picks up — and
+				// close the popup once the ticket is secured.
+				win.webContents.on("did-create-window", (...args: unknown[]) => {
+					onNav(...args);
+					const child = args[0] as { close?: () => void } | undefined;
+					if (done && child && typeof child.close === "function") {
+						try { child.close(); } catch { /* already closed */ }
+					}
+				});
+
+				// (c) Ticket surfaced via postMessage: the in-page patch mirrors it
+				// into the document title as "GHS_TICKET ST-…".
+				win.webContents.on("page-title-updated", (...args: unknown[]) => {
+					if (done) return;
+					for (const a of args) {
+						if (typeof a === "string" && a.indexOf("GHS_TICKET") >= 0) {
+							const m = a.match(/ST-[0-9A-Za-z._-]+/);
+							if (m) {
+								console.debug("Garmin Health Sync: M1 — ticket via postMessage:", m[0].slice(0, 14) + "…");
+								finish({ value: m[0], via: "postMessage" });
+								return;
+							}
+						}
+					}
+				});
+
 				win.webContents.on("dom-ready", () => {
 					void win.webContents.insertCSS("body { padding: 12px !important; }").catch(() => undefined);
 				});
@@ -315,12 +367,19 @@ export class GarminApi {
 						}
 					}).catch(() => { /* window is navigating */ });
 				};
+				// Re-applies the in-page patch after each navigation (new document →
+				// the __ghsPatched guard is gone, so it installs again).
+				const patchOnce = (): void => {
+					if (done || win.isDestroyed()) return;
+					void win.webContents.executeJavaScript(patchJs).catch(() => { /* window is navigating */ });
+				};
 				// Re-scrape on navigation as well, not only on load completion: some flows
 				// reveal the ticket via an in-page navigation that fires neither
 				// did-stop-loading nor dom-ready again (issue #6). Still strictly
 				// event-driven — no continuous polling, so the old setInterval violation
 				// (the reason this replaced the 1s poll) stays gone.
 				for (const ev of ["did-stop-loading", "dom-ready", "did-navigate", "did-navigate-in-page"]) {
+					win.webContents.on(ev, patchOnce);
 					win.webContents.on(ev, scrapeOnce);
 				}
 
