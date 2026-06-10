@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.10-beta.3
+
+### Added
+
+- Manual login fallback (issue #6): if the embedded Garmin login window never
+  completes the sign-in — it silently stalls on the form for some accounts, or
+  escapes to the system browser — you can now finish the login yourself. The new
+  **Manual login** button in settings (or the "Log in with service ticket" command)
+  opens the Garmin sign-in page in your browser; after signing in you paste the
+  resulting `ticket=ST-…` address back into the plugin and the regular token
+  exchange takes over. Verified end-to-end by an affected tester (7/7 days synced).
+
+### Fixed
+
+- Login no longer fails on networks where AWS S3 is blocked (issue #6): the public
+  OAuth consumer keys were fetched exclusively from a third-party S3 bucket, making
+  it a single point of failure even when Garmin itself was reachable. The plugin
+  now falls back to bundled keys (identical, long-stable values) whenever that
+  fetch fails.
+
 ## 0.9.10-beta.2
 
 ### Fixed
