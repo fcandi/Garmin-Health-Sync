@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.10-beta.4
+
+### Fixed
+
+- Two more ways the embedded login could escape to the system browser on
+  credential submit (issue #6): a programmatic `form.submit()` carrying a
+  `target` (fires no submit event, so the previous listener never saw it) and a
+  `<base target>` default browsing context. The login window now strips every
+  `target` attribute proactively (including dynamically added ones) and patches
+  `form.submit()` directly.
+
+### Internal
+
+- The login window now logs all navigation events and in-page interception
+  diagnostics (`GHS_DIAG`, ticket-redacted, no query strings) to the developer
+  console, so bug reports can name the exact escape vector.
+
 ## 0.9.10-beta.3
 
 ### Added

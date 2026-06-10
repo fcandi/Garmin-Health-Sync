@@ -281,12 +281,36 @@ export class GarminApi {
 		// attributes on click/submit, and mirrors any postMessage carrying a ticket
 		// into the page title (picked up via "page-title-updated" below — fires
 		// even when no navigation happens at all). Idempotent per document.
+		//
+		// beta.4 hardening (issue #6, tester still escaped to the system browser
+		// on credential submit despite the beta.2 patch) — two vectors the
+		// event-listener approach cannot see:
+		//   - programmatic form.submit() fires NO submit event → patch
+		//     HTMLFormElement.prototype.submit to strip `target` first (synchronous,
+		//     so a set-target-then-submit() sequence cannot win the race);
+		//   - <base target> sets a default browsing context for every link/form
+		//     WITHOUT its own target attribute → strip all target attributes
+		//     (including <base>) at install time and keep stripping via a
+		//     MutationObserver.
+		// Every interception logs a "GHS_DIAG …" console line (URLs without
+		// query/hash); the main side forwards them via "console-message" so
+		// testers' reports name the exact escape vector.
 		const patchJs =
 			`(function(){try{if(window.__ghsPatched)return;window.__ghsPatched=true;` +
-			`window.open=function(u){try{if(u)location.href=String(u);}catch(e){}return null;};` +
-			`document.addEventListener("click",function(ev){var n=ev.target;while(n&&n.getAttribute){if(n.getAttribute("target"))n.removeAttribute("target");n=n.parentNode;}},true);` +
-			`document.addEventListener("submit",function(ev){var f=ev.target;if(f&&f.getAttribute&&f.getAttribute("target"))f.removeAttribute("target");},true);` +
+			`var log=function(m){try{console.log("GHS_DIAG "+m);}catch(e){}};` +
+			`var clean=function(u){try{return String(u).split("?")[0].split("#")[0];}catch(e){return "";}};` +
+			`window.open=function(u){log("window.open -> in-place: "+clean(u));try{if(u)location.href=String(u);}catch(e){}return null;};` +
+			`var stripAll=function(root){try{if(root&&root.querySelectorAll){var els=root.querySelectorAll("[target]");for(var i=0;i<els.length;i++){log("target-strip: "+els[i].tagName+" "+els[i].getAttribute("target"));els[i].removeAttribute("target");}}}catch(e){}};` +
+			`stripAll(document);` +
+			`try{new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var m=ms[i];` +
+			`if(m.type==="attributes"&&m.target&&m.target.getAttribute&&m.target.getAttribute("target")){log("target-strip(mut): "+m.target.tagName);m.target.removeAttribute("target");}` +
+			`else if(m.addedNodes){for(var j=0;j<m.addedNodes.length;j++){var n=m.addedNodes[j];if(n&&n.nodeType===1){if(n.getAttribute&&n.getAttribute("target")){log("target-strip(add): "+n.tagName);n.removeAttribute("target");}stripAll(n);}}}}})` +
+			`.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["target"]});}catch(e){}` +
+			`try{var ns=HTMLFormElement.prototype.submit;HTMLFormElement.prototype.submit=function(){try{if(this.getAttribute&&this.getAttribute("target")){log("form.submit target-strip: "+this.getAttribute("target"));this.removeAttribute("target");}log("form.submit action="+clean(this.action));}catch(e){}return ns.apply(this,arguments);};}catch(e){}` +
+			`document.addEventListener("click",function(ev){var n=ev.target;while(n&&n.getAttribute){if(n.getAttribute("target")){log("click target-strip: "+n.tagName);n.removeAttribute("target");}n=n.parentNode;}},true);` +
+			`document.addEventListener("submit",function(ev){var f=ev.target;try{if(f&&f.getAttribute&&f.getAttribute("target")){log("submit target-strip: "+f.getAttribute("target"));f.removeAttribute("target");}log("submit action="+clean(f&&f.action));}catch(e){}},true);` +
 			`window.addEventListener("message",function(ev){try{var d=ev?ev.data:null;var s=typeof d==="string"?d:JSON.stringify(d);var m=s?s.match(/ST-[0-9A-Za-z._-]+/):null;if(m)document.title="GHS_TICKET "+m[0];}catch(e){}});` +
+			`log("patch installed on "+clean(location.href));` +
 			`}catch(e){}})()`;
 
 		const timeoutMs = silent ? 30000 : 120000;
@@ -307,10 +331,15 @@ export class GarminApi {
 				// (a) Ticket from a navigation URL. Accept both the documented redirect
 				// `?ticket=ST-…` and a bare `ST-…` token anywhere in the URL — some flows
 				// carry the ticket outside the `ticket` query parameter (issue #6).
-				const onNav = (...args: unknown[]): void => {
+				// Every event is logged (URL without query/ticket) — the affected
+				// testers' logs showed NO navigation at all after submit, so a
+				// complete nav trace is the discriminator between "widget never
+				// navigates" and "navigation happens but carries no ticket".
+				const onNav = (evName: string, ...args: unknown[]): void => {
 					if (done) return;
 					const url = findUrlInArgs(args);
 					if (!url) return;
+					console.debug(`Garmin Health Sync: M1 nav [${evName}]:`, url.split("?")[0]);
 					let tk: string | null = null;
 					try {
 						tk = new URL(url).searchParams.get("ticket");
@@ -326,9 +355,26 @@ export class GarminApi {
 						finish({ value: tk, via: "redirect" });
 					}
 				};
-				for (const ev of ["will-redirect", "did-redirect-navigation", "did-navigate", "did-navigate-in-page", "did-start-navigation"]) {
-					win.webContents.on(ev, onNav);
+				for (const ev of ["will-navigate", "will-redirect", "did-redirect-navigation", "did-navigate", "did-navigate-in-page", "did-start-navigation"]) {
+					win.webContents.on(ev, (...args: unknown[]) => onNav(ev, ...args));
 				}
+
+				// Forward the in-page patch's GHS_DIAG lines into the plugin console
+				// (redacted), so a tester's normal-login attempt names the exact
+				// escape vector without a custom build. Electron delivers
+				// console-message args either positionally (level, message, …) or as
+				// a details object with `message`.
+				win.webContents.on("console-message", (...args: unknown[]) => {
+					let msg = "";
+					for (const a of args) {
+						if (typeof a === "string" && a.indexOf("GHS_DIAG") >= 0) { msg = a; break; }
+						if (a && typeof a === "object" && "message" in a) {
+							const m = (a as { message: unknown }).message;
+							if (typeof m === "string" && m.indexOf("GHS_DIAG") >= 0) { msg = m; break; }
+						}
+					}
+					if (msg) console.debug("Garmin Health Sync: login-page diag —", msg.replace(/ST-[0-9A-Za-z._-]+/g, "ST-<redacted>"));
+				});
 
 				// (d) Should a popup still get created despite the in-page patch
 				// (e.g. window.open captured before the patch ran), pull the ticket
@@ -336,7 +382,7 @@ export class GarminApi {
 				// details object with `url`, which findUrlInArgs picks up — and
 				// close the popup once the ticket is secured.
 				win.webContents.on("did-create-window", (...args: unknown[]) => {
-					onNav(...args);
+					onNav("did-create-window", ...args);
 					const child = args[0] as { close?: () => void } | undefined;
 					if (done && child && typeof child.close === "function") {
 						try { child.close(); } catch { /* already closed */ }
