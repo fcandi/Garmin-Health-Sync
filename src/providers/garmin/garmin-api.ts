@@ -112,6 +112,7 @@ type BrowserWindowType = {
 		insertCSS: (css: string) => Promise<string>;
 		setUserAgent?: (ua: string) => void;
 		on: (event: string, handler: (...args: unknown[]) => void) => void;
+		setWindowOpenHandler?: (handler: (details: { url?: string }) => { action: string }) => void;
 	};
 	loadURL: (url: string, options?: { userAgent?: string }) => Promise<void>;
 	close: () => void;
@@ -359,6 +360,28 @@ export class GarminApi {
 					win.webContents.on(ev, (...args: unknown[]) => onNav(ev, ...args));
 				}
 
+				// (e) Main-process new-window interception (issue #6 escape variant).
+				// Some accounts get a widget variant that delivers the ticket by OPENING
+				// the service URL in a NEW browsing context (window.open / target=_blank).
+				// Obsidian forwards new-window opens to the SYSTEM browser, where the
+				// ticket is lost — the escape the renderer-side patches couldn't stop.
+				// Setting our own handler on this webContents pre-empts Obsidian's: it
+				// runs in the MAIN process (so it fires regardless of in-page patch
+				// timing), pulls the ticket straight out of the requested URL via onNav,
+				// and denies the open so nothing reaches the system browser. Crucially,
+				// even if the `deny` return is dropped over @electron/remote, the handler
+				// has ALREADY read details.url — so the ticket is captured either way and
+				// the login completes in-plugin even if a browser window still flashes.
+				try {
+					win.webContents.setWindowOpenHandler?.((details: { url?: string }) => {
+						if (details && typeof details.url === "string") {
+							console.debug("Garmin Health Sync: M1 — window-open intercepted:", details.url.split("?")[0]);
+							onNav("window-open", details.url);
+						}
+						return { action: "deny" };
+					});
+				} catch { /* runtime without a settable handler over remote — other paths still apply */ }
+
 				// Forward the in-page patch's GHS_DIAG lines into the plugin console
 				// (redacted), so a tester's normal-login attempt names the exact
 				// escape vector without a custom build. Electron delivers
@@ -591,7 +614,15 @@ export class GarminApi {
 			throw: false,
 		});
 		const ok = res.status >= 200 && res.status < 300;
-		return { status: res.status, data: ok ? res.json : null };
+		// Garmin returns 200 with an EMPTY body for endpoints that have no data for
+		// the day (e.g. hrv on an account/day without readings). res.json then throws
+		// "Unexpected end of JSON input" — guard it and treat an unparseable body as
+		// "no data" instead of letting the SyntaxError bubble into the fetch.
+		let data: unknown = null;
+		if (ok) {
+			try { data = res.json; } catch { data = null; }
+		}
+		return { status: res.status, data };
 	}
 
 	/** Fetches the displayName (for user-specific endpoints) from socialProfile. */
