@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.10-beta.5
+
+### Fixed
+
+- Login (issue #6): for accounts where Garmin delivers the sign-in ticket by
+  opening the service URL in a *new* window, Obsidian forwarded that open to the
+  system browser and the one-time ticket was lost. The login window now
+  intercepts the new-window hand-off at the Electron main-process level
+  (`setWindowOpenHandler`), reads the ticket straight from the URL, and keeps it
+  inside the plugin — so the login completes even if a browser window still
+  briefly appears.
+- Tolerate empty API responses (e.g. heart-rate variability on a day with no
+  reading): an empty `200` body no longer raises a JSON parse error mid-fetch.
+
 ## 0.9.10-beta.4
 
 ### Fixed
