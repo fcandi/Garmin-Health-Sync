@@ -108,4 +108,6 @@ export const es: Record<TranslationKeys, string> = {
 	modalManualLoginTicket: "Ticket",
 	modalManualLoginTicketDesc: "Pega aquí el ticket ST-… o la dirección completa",
 	modalManualLoginSubmit: "Iniciar sesión",
+	modalManualLoginPasteButton: "Iniciar sesión desde el portapapeles",
+	modalManualLoginPasteEmpty: "No se encontró ningún ticket ST-… en el portapapeles: copia primero la dirección de la página de resultado.",
 };

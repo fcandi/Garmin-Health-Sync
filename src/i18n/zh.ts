@@ -108,4 +108,6 @@ export const zh: Record<TranslationKeys, string> = {
 	modalManualLoginTicket: "票据",
 	modalManualLoginTicketDesc: "在此粘贴 ST-… 票据或完整地址",
 	modalManualLoginSubmit: "登录",
+	modalManualLoginPasteButton: "从剪贴板登录",
+	modalManualLoginPasteEmpty: "剪贴板中未找到 ST-… 票据 —— 请先复制结果页面的网址。",
 };

@@ -107,6 +107,8 @@ export const en = {
 	modalManualLoginTicket: "Ticket",
 	modalManualLoginTicketDesc: "Paste the ST-… ticket or the full address here",
 	modalManualLoginSubmit: "Log in",
+	modalManualLoginPasteButton: "Sign in from clipboard",
+	modalManualLoginPasteEmpty: "No ST-… ticket found in the clipboard — copy the address of the result page first.",
 };
 
 export type TranslationKeys = keyof typeof en;

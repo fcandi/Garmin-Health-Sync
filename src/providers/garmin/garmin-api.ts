@@ -1,4 +1,4 @@
-import { requestUrl } from "obsidian";
+import { requestUrl, Platform } from "obsidian";
 import type { ServerRegion } from "../../settings";
 import { LoginRequiredError, GarminAuthError, isGarminAuthError, isAuthFailureStatus } from "../../errors";
 import { getConsumer, getOAuth1, exchange, OAUTH_UA, type OAuth1Token, type OAuth2Token, type Consumer } from "./garmin-oauth";
@@ -121,6 +121,25 @@ type BrowserWindowType = {
 	show: () => void;
 	isDestroyed: () => boolean;
 };
+
+// Desktop-Chrome User-Agent for the login window (issue #6). The embedded sign-in
+// otherwise carries Obsidian's `obsidian/…` + `Electron/…` UA tokens; on some
+// accounts/sessions Garmin's SSO then hands the service ticket over in a way that
+// escapes or stalls the embedded window, while the identical sign-in in a real browser
+// completes (the manual flow is the proof). A stock Chrome UA (no Electron/obsidian
+// markers) makes Garmin treat the window like a normal browser. Platform-matched via
+// Obsidian's Platform API so the string stays plausible on each desktop OS.
+function getLoginUserAgent(): string {
+	const chrome = "Chrome/137.0.0.0";
+	if (Platform.isMacOS) {
+		return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Safari/537.36`;
+	}
+	if (Platform.isLinux) {
+		return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Safari/537.36`;
+	}
+	// Windows and any other desktop — the most common desktop UA.
+	return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Safari/537.36`;
+}
 
 export class GarminApi {
 	// OAuth tokens (M1/M2): long-lived OAuth1 + short-lived OAuth2. Persisted via main.ts.
@@ -250,14 +269,22 @@ export class GarminApi {
 		const BrowserWindow = this.getBrowserWindowConstructor();
 		const signinUrl = this.getSigninUrl();
 
+		// Dedicated, persistent session for the login window (issue #6): isolates Garmin's
+		// SSO/Cloudflare cookies from Obsidian's default session and lets a cf_clearance
+		// cookie survive across attempts. Combined with a stock desktop-Chrome UA so Garmin
+		// treats the window like a normal browser (the manual flow proves a real browser
+		// completes the sign-in where the Electron-marked window stalls/escapes).
+		const loginUa = getLoginUserAgent();
 		const win: BrowserWindowType = new BrowserWindow({
 			width: 500,
 			height: 700,
 			show: !silent,
 			title: "Garmin Connect Login",
-			webPreferences: { nodeIntegration: false, contextIsolation: false },
+			webPreferences: { nodeIntegration: false, contextIsolation: false, partition: "persist:ghs-login" },
 		});
 		this.activeLoginWindow = win;   // F12: handle for closeActiveLogin() on plugin unload
+		try { win.webContents.setUserAgent?.(loginUa); } catch { /* ignore */ }
+		console.debug("Garmin Health Sync: M1 — login window UA:", loginUa);
 
 		// JS that searches the page/URL for a CAS service ticket. Garmin surfaces the
 		// ticket in several shapes depending on account/region/MFA: the embed redirect
@@ -482,8 +509,9 @@ export class GarminApi {
 					}).catch(() => { /* window may already be destroyed */ }).then(() => finish(null));
 				}, timeoutMs);
 
-				// Load AFTER the event handlers are registered.
-				void win.loadURL(signinUrl).catch((e: unknown) => {
+				// Load AFTER the event handlers are registered. Pass the UA on loadURL too
+				// (belt-and-braces with setUserAgent) so the very first request carries it.
+				void win.loadURL(signinUrl, { userAgent: loginUa }).catch((e: unknown) => {
 					console.debug("Garmin Health Sync: M1 sign-in load failed:", e);
 				});
 			});

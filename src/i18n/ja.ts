@@ -108,4 +108,6 @@ export const ja: Record<TranslationKeys, string> = {
 	modalManualLoginTicket: "チケット",
 	modalManualLoginTicketDesc: "ST-… チケットまたはアドレス全体をここに貼り付けてください",
 	modalManualLoginSubmit: "ログイン",
+	modalManualLoginPasteButton: "クリップボードからログイン",
+	modalManualLoginPasteEmpty: "クリップボードに ST-… チケットが見つかりません。先に結果ページのアドレスをコピーしてください。",
 };

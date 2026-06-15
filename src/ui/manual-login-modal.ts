@@ -59,23 +59,38 @@ export class ManualLoginModal extends Modal {
 				.setPlaceholder("ST-…")
 				.onChange(value => { input = value; }));
 
+		let busy = false;
+		const submit = async (value: string): Promise<void> => {
+			const v = value.trim();
+			if (!v || busy) return;
+			busy = true;
+			try {
+				if (await this.onSubmit(v)) this.close();
+			} finally {
+				busy = false;
+			}
+		};
+
 		new Setting(contentEl)
+			// Primary one-click path (issue #6): read the ST-… ticket straight from the
+			// clipboard after the user copied the result-page address in their browser, so
+			// they never have to paste into the field. An explicit button (no background
+			// clipboard polling) keeps this clean for the Obsidian plugin review.
 			.addButton(btn => btn
-				.setButtonText(t("modalManualLoginSubmit", this.lang))
+				.setButtonText(t("modalManualLoginPasteButton", this.lang))
 				.setCta()
 				.onClick(async () => {
-					if (!input.trim()) return;
-					btn.setDisabled(true);
-					try {
-						const ok = await this.onSubmit(input.trim());
-						if (ok) {
-							this.close();
-							return;
-						}
-					} finally {
-						btn.setDisabled(false);
+					let clip = "";
+					try { clip = await navigator.clipboard.readText(); } catch { /* clipboard unavailable */ }
+					if (!/ST-[0-9A-Za-z._-]+/.test(clip)) {
+						new Notice(t("modalManualLoginPasteEmpty", this.lang));
+						return;
 					}
-				}));
+					await submit(clip);
+				}))
+			.addButton(btn => btn
+				.setButtonText(t("modalManualLoginSubmit", this.lang))
+				.onClick(() => { void submit(input); }));
 	}
 
 	onClose(): void {

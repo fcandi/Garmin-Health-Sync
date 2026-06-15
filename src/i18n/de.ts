@@ -109,4 +109,6 @@ export const de: Record<TranslationKeys, string> = {
 	modalManualLoginTicket: "Ticket",
 	modalManualLoginTicketDesc: "Füge hier das ST-…-Ticket oder die vollständige Adresse ein",
 	modalManualLoginSubmit: "Anmelden",
+	modalManualLoginPasteButton: "Aus Zwischenablage anmelden",
+	modalManualLoginPasteEmpty: "Kein ST-…-Ticket in der Zwischenablage gefunden — kopiere zuerst die Adresse der Ergebnisseite.",
 };
