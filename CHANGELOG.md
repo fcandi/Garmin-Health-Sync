@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.10-beta.7
+
+### Fixed
+
+- Login (issue #6): capture the SSO service ticket at the network layer, not just
+  via DOM/navigation events. The login window's session now watches
+  `webRequest.onBeforeRedirect`/`onCompleted` for the `302 → /sso/embed?ticket=ST-…`
+  and reads the ticket straight from the redirect — so it is captured even when the
+  embedded window fires no `did-navigate` and even if the follow-up navigation
+  escapes to the system browser. The same hook logs each `/sso/signin` request's
+  HTTP status, which pins down whether the sign-in stalls on a capture problem or a
+  Cloudflare block. Registration is guarded so it can never disturb the existing
+  capture paths.
+
+### Changed
+
+- The guided browser login is now a clearly offered path rather than a dead end:
+  the "Sign in via browser" button has an explanatory tooltip, and when the in-app
+  sign-in produces no ticket the plugin shows a short notice before opening the
+  guided browser login instead of popping the dialog wordlessly.
+
 ## 0.9.10-beta.6
 
 ### Fixed
