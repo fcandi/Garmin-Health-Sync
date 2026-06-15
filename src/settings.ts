@@ -139,6 +139,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 			// login window never completes the sign-in.
 			loginSetting.addButton(btn => btn
 				.setButtonText(t("settingsGarminManualLogin", lang))
+				.setTooltip(t("settingsGarminManualLoginTooltip", lang))
 				.onClick(() => {
 					this.plugin.openManualLogin(() => this.display());
 				}));

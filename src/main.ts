@@ -282,9 +282,11 @@ export default class HealthSyncPlugin extends Plugin {
 			// dead-end failure notice, fall through to the guided browser login — it uses a
 			// real browser and is proven to complete where the embedded window cannot.
 			console.debug("Garmin Health Sync: in-window login produced no ticket → guided browser login");
+			new Notice(t("noticeLoginFallbackToBrowser", this.settings.language));
 			this.openManualLogin();
 		} catch (error) {
 			console.error("Garmin Health Sync: OAuth login failed", error);
+			new Notice(t("noticeLoginFallbackToBrowser", this.settings.language));
 			this.openManualLogin();
 		}
 	}

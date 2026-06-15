@@ -113,6 +113,12 @@ type BrowserWindowType = {
 		setUserAgent?: (ua: string) => void;
 		on: (event: string, handler: (...args: unknown[]) => void) => void;
 		setWindowOpenHandler?: (handler: (details: { url?: string }) => { action: string }) => void;
+		session?: {
+			webRequest?: {
+				onBeforeRedirect?: (filter: { urls: string[] } | null, listener?: (details: { url: string; redirectURL: string; statusCode: number }) => void) => void;
+				onCompleted?: (filter: { urls: string[] } | null, listener?: (details: { url: string; statusCode: number; method: string }) => void) => void;
+			};
+		};
 	};
 	loadURL: (url: string, options?: { userAgent?: string }) => Promise<void>;
 	close: () => void;
@@ -342,6 +348,9 @@ export class GarminApi {
 			`}catch(e){}})()`;
 
 		const timeoutMs = silent ? 30000 : 120000;
+		// Network-level capture listeners are registered on the (persistent) login
+		// session inside the promise; this holder lets finish()/finally remove them.
+		let removeWebRequestListeners: () => void = () => { /* set on registration */ };
 
 		try {
 			const ticket = await new Promise<{ value: string; via: string } | null>((resolve) => {
@@ -349,6 +358,7 @@ export class GarminApi {
 				const finish = (t: { value: string; via: string } | null): void => {
 					if (done) return;
 					done = true;
+					removeWebRequestListeners();   // stop network capture as soon as we're done
 					// Ticket captured → hide the window immediately so the Garmin
 					// embed ticket page (raw JSON response) does not flash while
 					// getOAuth1/exchange run in the background.
@@ -385,6 +395,46 @@ export class GarminApi {
 				};
 				for (const ev of ["will-navigate", "will-redirect", "did-redirect-navigation", "did-navigate", "did-navigate-in-page", "did-start-navigation"]) {
 					win.webContents.on(ev, (...args: unknown[]) => onNav(ev, ...args));
+				}
+
+				// (f) Network-level capture (issue #6, the layer not tried before). The
+				// credential POST to /sso/signin and its `302 → …/sso/embed?ticket=ST-…`
+				// run on THIS window's persistent session; webRequest sees that redirect at
+				// the HTTP layer even when no `did-navigate` fires and even if the follow-up
+				// navigation escapes to the system browser. onBeforeRedirect / onCompleted
+				// are pure observers (no synchronous return value), so — unlike
+				// setWindowOpenHandler — they work reliably over @electron/remote.
+				// onCompleted additionally logs the POST's HTTP status (query-stripped, no
+				// ticket leak): `302` → we read the Location; `403`/cf-mitigated →
+				// Cloudflare blocks it; `200` → ticket only in the body; no event → the
+				// request hangs. That status is the diagnostic that finally tells apart
+				// "capture problem" from "Cloudflare block".
+				const ssoFilter = { urls: ["*://sso.garmin.com/*", "*://sso.garmin.cn/*"] };
+				try {
+					const webRequest = win.webContents.session?.webRequest;
+					if (webRequest?.onBeforeRedirect && webRequest?.onCompleted) {
+						webRequest.onBeforeRedirect(ssoFilter, (d) => {
+							onNav("webRequest-redirect", d.redirectURL, d.url);
+						});
+						webRequest.onCompleted(ssoFilter, (d) => {
+							console.debug(`Garmin Health Sync: M1 webRequest [${d.method}] ${(d.url || "").split("?")[0]} → ${d.statusCode}`);
+							if (done) return;
+							const m = (d.url || "").match(/ST-[0-9A-Za-z._-]+/);
+							if (m) {
+								console.debug("Garmin Health Sync: M1 — ticket via webRequest:", m[0].slice(0, 14) + "…");
+								finish({ value: m[0], via: "webRequest" });
+							}
+						});
+						removeWebRequestListeners = () => {
+							try { webRequest.onBeforeRedirect?.(null); webRequest.onCompleted?.(null); } catch { /* session already gone */ }
+						};
+					} else {
+						console.debug("Garmin Health Sync: M1 — webRequest unavailable on login session (remote proxy); relying on nav/DOM capture");
+					}
+				} catch (e) {
+					// A throw while wiring webRequest over @electron/remote must NOT abort the
+					// proven nav/DOM capture paths (e/c/d/b) registered below — degrade to them.
+					console.debug("Garmin Health Sync: M1 — webRequest registration failed over remote; relying on nav/DOM capture:", e);
 				}
 
 				// (e) Main-process new-window interception (issue #6 escape variant).
@@ -528,6 +578,7 @@ export class GarminApi {
 			const msg = e instanceof Error ? e.message : String(e);
 			return { ok: false, detail: `error${status != null ? " status=" + status : ""} (plugin v${this.pluginVersion || "?"}): ${msg}` };
 		} finally {
+			removeWebRequestListeners();   // backstop: ensure listeners are off the persistent session
 			if (!win.isDestroyed()) win.close();
 			this.activeLoginWindow = null;
 		}
