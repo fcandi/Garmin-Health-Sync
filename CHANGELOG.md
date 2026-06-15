@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.10-beta.6
+
+### Fixed
+
+- Login (issue #6): on setups where the embedded sign-in never hands the ticket
+  to the login window (it stalls on the form or escapes to the system browser),
+  the plugin could only fail. The login window now presents a stock desktop-Chrome
+  User-Agent (no `obsidian`/`Electron` markers) and uses its own persistent
+  session, so Garmin treats it like the regular browser in which the manual login
+  already works. And if no ticket is captured, the plugin now automatically opens
+  the guided browser login instead of reporting a bare failure.
+
+### Added
+
+- Manual login: a "Sign in from clipboard" button that reads the `ST-…` ticket
+  (or the full result-page address) straight from the clipboard, so completing
+  the guided browser login is a single click — no manual pasting.
+
 ## 0.9.10-beta.5
 
 ### Fixed
