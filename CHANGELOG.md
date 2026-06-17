@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.11
+
+### Internal
+
+- Resolve a community-directory review finding: the manual-login ticket field now uses a translatable, sentence-case placeholder instead of a hardcoded one, removing a disallowed lint-rule exception. No change to how the login works.
+
 ## 0.9.10
 
 A reliability release focused on the Garmin login.
