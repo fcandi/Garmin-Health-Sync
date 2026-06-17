@@ -108,6 +108,7 @@ export const en = {
 	modalManualLoginCopied: "Sign-in link copied to clipboard",
 	modalManualLoginTicket: "Ticket",
 	modalManualLoginTicketDesc: "Paste the ST-… ticket or the full address here",
+	modalManualLoginTicketPlaceholder: "Ticket or full address",
 	modalManualLoginSubmit: "Log in",
 	modalManualLoginPasteButton: "Sign in from clipboard",
 	modalManualLoginPasteEmpty: "No ST-… ticket found in the clipboard — copy the address of the result page first.",

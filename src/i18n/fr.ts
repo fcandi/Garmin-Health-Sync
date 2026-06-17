@@ -109,6 +109,7 @@ export const fr: Record<TranslationKeys, string> = {
 	modalManualLoginCopied: "Lien de connexion copié dans le presse-papiers",
 	modalManualLoginTicket: "Ticket",
 	modalManualLoginTicketDesc: "Collez ici le ticket ST-… ou l'adresse complète",
+	modalManualLoginTicketPlaceholder: "Ticket ou adresse complète",
 	modalManualLoginSubmit: "Se connecter",
 	modalManualLoginPasteButton: "Se connecter depuis le presse-papiers",
 	modalManualLoginPasteEmpty: "Aucun ticket ST-… trouvé dans le presse-papiers — copiez d'abord l'adresse de la page de résultat.",

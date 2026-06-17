@@ -55,8 +55,7 @@ export class ManualLoginModal extends Modal {
 			.setName(t("modalManualLoginTicket", this.lang))
 			.setDesc(t("modalManualLoginTicketDesc", this.lang))
 			.addText(text => text
-				// eslint-disable-next-line obsidianmd/ui/sentence-case -- "ST-…" is Garmin's literal service ticket format, not UI copy
-				.setPlaceholder("ST-…")
+				.setPlaceholder(t("modalManualLoginTicketPlaceholder", this.lang))
 				.onChange(value => { input = value; }));
 
 		let busy = false;
