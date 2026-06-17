@@ -21,6 +21,13 @@ export interface HealthData {
 	startLocation?: { lat: number; lon: number };
 }
 
+/** Result of an interactive login. `cancelled` = the user closed the login
+ *  window deliberately (not a stall/escape), so callers can skip a fallback prompt. */
+export interface LoginResult {
+	ok: boolean;
+	cancelled: boolean;
+}
+
 /** Interface implemented by every health provider */
 export interface HealthProvider {
 	/** Unique provider identifier */
@@ -31,8 +38,8 @@ export interface HealthProvider {
 	/** Checks whether valid credentials are available */
 	isConfigured(): boolean;
 
-	/** Perform login, returns true on success */
-	authenticate(): Promise<boolean>;
+	/** Perform an interactive login. */
+	authenticate(): Promise<LoginResult>;
 
 	/** Checks whether the current session is still valid */
 	isSessionValid(): boolean;

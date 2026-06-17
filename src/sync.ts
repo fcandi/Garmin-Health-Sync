@@ -29,7 +29,7 @@ export class SyncManager {
 			// Authenticate if needed
 			if (!this.provider.isSessionValid()) {
 				const authenticated = await this.provider.authenticate();
-				if (!authenticated) {
+				if (!authenticated.ok) {
 					if (!quiet) new Notice(t("noticeSyncError", settings.language));
 					return false;
 				}
@@ -89,7 +89,7 @@ export class SyncManager {
 		try {
 			if (!this.provider.isSessionValid()) {
 				const authenticated = await this.provider.authenticate();
-				if (!authenticated) return 0;
+				if (!authenticated.ok) return 0;
 			}
 
 			const enabledMetrics = Object.entries(settings.enabledMetrics)

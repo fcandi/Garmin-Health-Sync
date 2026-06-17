@@ -158,7 +158,7 @@ export class GarminApi {
 	private urls: RegionUrls = getRegionUrls("international");
 	private endpoints: Record<string, (displayName: string, date: string) => string> = getEndpoints(this.urls.apiBase);
 	// Concurrency guards: in-flight login (F9) and open login window (F12).
-	private loginPromise: Promise<{ ok: boolean; detail: string }> | null = null;
+	private loginPromise: Promise<{ ok: boolean; detail: string; cancelled?: boolean }> | null = null;
 	private activeLoginWindow: BrowserWindowType | null = null;
 	// Plugin version for self-identifying login/diagnostic logs (set from main.ts).
 	private pluginVersion = "";
@@ -231,7 +231,7 @@ export class GarminApi {
 	// `service`. On failure: navigation URLs (logged live) + HTML diagnostics.
 	// This is the regular interactive login; OAuth2 refresh + data fetching run
 	// silently afterwards without a BrowserWindow (ensureValidOAuth2/fetchDataForDate).
-	async loginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
+	async loginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string; cancelled?: boolean }> {
 		// F9: concurrent login calls (settings button + notice button) share ONE
 		// window/result instead of opening two BrowserWindows racing for the tokens.
 		if (this.loginPromise) return this.loginPromise;
@@ -269,7 +269,7 @@ export class GarminApi {
 		});
 	}
 
-	private async doLoginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string }> {
+	private async doLoginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string; cancelled?: boolean }> {
 		const silent = opts.silent ?? false;
 		console.debug(`Garmin Health Sync: starting OAuth login (plugin v${this.pluginVersion || "?"}, region=${this.urls.domain}, silent=${silent})`);
 		const BrowserWindow = this.getBrowserWindowConstructor();
@@ -351,6 +351,11 @@ export class GarminApi {
 		// Network-level capture listeners are registered on the (persistent) login
 		// session inside the promise; this holder lets finish()/finally remove them.
 		let removeWebRequestListeners: () => void = () => { /* set on registration */ };
+		// Distinguish a user-initiated window close (cancel) from a stall/timeout, so the
+		// caller can skip the guided-login prompt on a deliberate cancel. Our own
+		// win.close() in finally only runs after the promise resolved (done=true), so a
+		// "closed" event while done is still false means the USER closed the window.
+		let userCancelled = false;
 
 		try {
 			const ticket = await new Promise<{ value: string; via: string } | null>((resolve) => {
@@ -541,7 +546,7 @@ export class GarminApi {
 
 				// If the user closes the login window, resolve immediately (the poll
 				// used to detect this via isDestroyed; without it we need the event).
-				win.on("closed", () => finish(null));
+				win.on("closed", () => { if (!done) userCancelled = true; finish(null); });
 
 				// Timeout: brief breadcrumb showing which page the login stalled on
 				// (without query/ticket, without HTML dump).
@@ -567,6 +572,10 @@ export class GarminApi {
 			});
 
 			if (!ticket) {
+				if (userCancelled) {
+					console.debug("Garmin Health Sync: M1 — login window closed by user (cancelled)");
+					return { ok: false, detail: "cancelled", cancelled: true };
+				}
 				console.debug("Garmin Health Sync: M1 — no service ticket captured (timeout or sign-in incomplete)");
 				return { ok: false, detail: `no_ticket (plugin v${this.pluginVersion || "?"})` };
 			}

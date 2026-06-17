@@ -272,15 +272,20 @@ export default class HealthSyncPlugin extends Plugin {
 	/** Interactive OAuth login from settings (opens the Garmin login window). */
 	async loginViaBrowser(): Promise<void> {
 		try {
-			const success = await this.garminProvider.authenticate();
-			if (success) {
+			const result = await this.garminProvider.authenticate();
+			if (result.ok) {
 				await this.handleLoginResult(true, "noticeLoginFailed");
 				return;
 			}
-			// Issue #6: on some setups the in-window sign-in never yields a ticket (the
-			// hand-off escapes to the system browser or stalls on the form). Instead of a
-			// dead-end failure notice, fall through to the guided browser login — it uses a
-			// real browser and is proven to complete where the embedded window cannot.
+			if (result.cancelled) {
+				// User deliberately closed the login window — not a stall/escape. Don't
+				// nag with a fallback notice or auto-open the guided browser login.
+				console.debug("Garmin Health Sync: login window closed by user — no fallback prompt");
+				return;
+			}
+			// Issue #6: genuine no_ticket (the hand-off escapes to the system browser or
+			// stalls on the form). Instead of a dead-end failure notice, guide to the
+			// browser login — it uses a real browser and completes where the window cannot.
 			console.debug("Garmin Health Sync: in-window login produced no ticket → guided browser login");
 			new Notice(t("noticeLoginFallbackToBrowser", this.settings.language));
 			this.openManualLogin();

@@ -1,4 +1,4 @@
-import type { HealthData, HealthProvider } from "../provider";
+import type { HealthData, HealthProvider, LoginResult } from "../provider";
 import type { ServerRegion } from "../../settings";
 import { GarminApi, getRequiredEndpoints, calculateBatchDelay } from "./garmin-api";
 import type { OAuth1Token, OAuth2Token } from "./garmin-oauth";
@@ -51,10 +51,10 @@ export class GarminProvider implements HealthProvider {
 	}
 
 	/** Interactive OAuth login via BrowserWindow (ticket → OAuth1 → OAuth2). */
-	async authenticate(): Promise<boolean> {
+	async authenticate(): Promise<LoginResult> {
 		const res = await this.api.loginViaOAuth();
 		if (!res.ok) console.debug("Garmin Health Sync: OAuth login failed —", res.detail);
-		return res.ok;
+		return { ok: res.ok, cancelled: res.cancelled === true };
 	}
 
 	/** Sign-in URL for the manual-ticket fallback (opened in an external browser). */
