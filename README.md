@@ -157,6 +157,8 @@ This plugin makes network requests to two external services:
 
 No data is sent to any other server.
 
+**Clipboard:** The *Sign in via browser* login reads the clipboard once — and only when you click **Sign in from clipboard** — to pick up the one-time login ticket you copied from your browser. It writes to the clipboard only when you click to copy the sign-in link. The clipboard is never accessed in the background.
+
 ## Development
 
 ```bash
