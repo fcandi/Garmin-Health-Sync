@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.10
+
+A reliability release focused on the Garmin login.
+
+### Added
+
+- **Sign in via browser** — a guided login that completes the sign-in in your normal web browser and hands the result back to the plugin. Start it from the plugin settings, or let the plugin open it for you automatically when the in-app login window can't finish. After you sign in, **Sign in from clipboard** completes the login in one click — no copy-pasting of tokens.
+
+### Fixed
+
+- The Garmin login is much more robust (issue #6). The in-app login window now identifies as a normal desktop browser, keeps the sign-in in its own session, and reads the login ticket directly from the network — so it completes on setups where it previously stalled or jumped to an external browser. Where the embedded window still can't finish, the guided browser login takes over instead of failing.
+- If the public OAuth key endpoint is blocked on your network, the plugin falls back to bundled keys instead of failing the login.
+- Empty API responses (for example heart-rate variability on a day with no reading) no longer raise an error during sync.
+
 ## 0.9.10-beta.7
 
 ### Fixed
