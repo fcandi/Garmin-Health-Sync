@@ -731,8 +731,12 @@ export class GarminApi {
 	}
 
 	private getBrowserWindowConstructor(): new (opts: object) => BrowserWindowType {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports -- Electron must be loaded via require() at runtime in Obsidian plugins
-		const electron = require("electron") as { remote?: { BrowserWindow: new (opts: object) => BrowserWindowType }; BrowserWindow: new (opts: object) => BrowserWindowType };
+		// Electron must be loaded via require() at runtime in Obsidian plugins.
+		// Use the renderer's window.require, typed locally: the bare global
+		// require is typed by @types/node, which the directory review bot's
+		// lint environment does not install (error-typed call there).
+		const req = (window as unknown as { require: (module: string) => unknown }).require;
+		const electron = req("electron") as { remote?: { BrowserWindow: new (opts: object) => BrowserWindowType }; BrowserWindow: new (opts: object) => BrowserWindowType };
 		return (electron.remote ?? electron).BrowserWindow;
 	}
 

@@ -1,4 +1,13 @@
 import { App, Notice, TFile, TFolder, moment, normalizePath, parseYaml, stringifyYaml } from "obsidian";
+
+/**
+ * Obsidian re-exports moment, but its type declarations resolve through the
+ * external moment package, which the directory review bot's lint environment
+ * does not install — every call becomes error-typed there. Type the tiny
+ * surface this module uses locally so the checks hold in any environment.
+ */
+type MomentFn = (input?: string, format?: string) => { format(format: string): string };
+const momentFn = moment as unknown as MomentFn;
 import type { HealthData } from "./providers/provider";
 import { applyPrefix } from "./metrics";
 import { reverseGeocode } from "./geocoding";
@@ -273,7 +282,7 @@ async function backupFile(app: App, file: TFile, content: string, reason: string
 	try {
 		const backupDir = "_garmin-health-sync/backups";
 		await ensureFolderExists(app, backupDir);
-		const ts = moment().format("YYYY-MM-DDTHH-mm-ss");
+		const ts = momentFn().format("YYYY-MM-DDTHH-mm-ss");
 		const safeName = file.name.replace(/\.md$/, "");
 		const backupPath = normalizePath(`${backupDir}/${safeName}.${ts}.md`);
 		const header = `<!-- Garmin Health Sync Backup\nReason: ${reason}\nOriginal: ${file.path}\nTimestamp: ${ts}\n-->\n`;
@@ -315,5 +324,5 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
  * ddd, MMM, Wo, etc.).
  */
 function formatDate(dateStr: string, format: string): string {
-	return moment(dateStr, "YYYY-MM-DD").format(format);
+	return momentFn(dateStr, "YYYY-MM-DD").format(format);
 }

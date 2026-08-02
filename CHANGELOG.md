@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.2
+
+### Internal
+
+- Resolve the remaining review warnings, which came from type declarations the review environment does not install: the `moment` calls and the Electron `require` are now typed locally (no behavior change), and the TypeScript `lib` gained `DOM.Iterable`. Lint is verified clean even in a simulated review environment without the `moment` and `@types/node` packages.
+
 ## 0.10.1
 
 ### Internal

@@ -19,6 +19,7 @@
 		"useUnknownInCatchVariables": true,
 		"lib": [
 			"DOM",
+			"DOM.Iterable",
 			"ES2018"
 		]
 	},
