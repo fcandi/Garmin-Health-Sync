@@ -100,6 +100,19 @@ npm run build
 - Attach `manifest.json`, `main.js`, and `styles.css` (if present) to the release as individual assets.
 - After the initial release, follow the process to add/update your plugin in the community catalog as required.
 
+### Release checklist (this project)
+
+Past releases were marked down in quality for inconsistent numbering and a broken `versions.json` (missing `0.9.5`, unsorted). Follow this every time:
+
+1. **Keep the version in sync across all four files**: `package.json`, `package-lock.json`, `manifest.json`, `versions.json`. Running `npm version x.y.z` updates `package.json` + `package-lock.json` and runs `version-bump.mjs` (which writes `manifest.json` and appends to `versions.json`).
+2. **`versions.json` must be complete and sorted ascending**, every released stable version → its `minAppVersion`. No gaps. Do **not** add `-beta` versions here — `versions.json` is for stable store versions only.
+3. **Before tagging**, run and confirm clean: `npm run build`, `npm run lint`, `git diff --check` (no whitespace errors / conflict markers).
+4. **Lint warnings are release blockers, not noise.** The Obsidian community review mirrors `eslint-plugin-obsidianmd` findings (warnings and recommendations, e.g. deprecated APIs, missing `getSettingDefinitions()`) into the plugin's public review score. If `npm run lint` reports anything, resolve it before tagging or explicitly warn Andi and let him decide — never ship a release with known lint warnings silently. (Learned 2026-08-02 in immich-journal: two ignored warnings cost a rating point on the plugin's review page.)
+5. **Tag format**: stable = exactly `x.y.z` (no leading `v`). Pre-release = `x.y.z-beta.N`. The release workflow triggers on both and auto-marks `-beta.N` tags as GitHub pre-releases.
+6. **The GitHub release's tag and name must both match `manifest.json`'s version.** Release notes come from `CHANGELOG.md` — add the new section at the top before tagging.
+7. **Verify release assets** are attached: `main.js`, `manifest.json`, `styles.css`.
+8. **After release, confirm with** `gh release view <version> --json tagName,name,isDraft,isPrerelease,assets`.
+
 ## Security, privacy, and compliance
 
 Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particular:
