@@ -456,17 +456,12 @@ export default class HealthSyncPlugin extends Plugin {
 			this.loginRequiredNotice = null;
 		}
 
-		const fragment = activeDocument.createDocumentFragment();
-		const wrapper = activeDocument.createElement("div");
-		const message = activeDocument.createElement("div");
-		message.textContent = t("noticeSessionExpired", this.settings.language);
-		wrapper.appendChild(message);
-
-		const button = activeDocument.createElement("button");
-		button.textContent = t("noticeLoginAction", this.settings.language);
-		wrapper.appendChild(button);
-
-		fragment.appendChild(wrapper);
+		const fragment = createFragment();
+		const wrapper = fragment.createDiv();
+		wrapper.createDiv({ text: t("noticeSessionExpired", this.settings.language) });
+		const button = wrapper.createEl("button", {
+			text: t("noticeLoginAction", this.settings.language),
+		});
 		const notice = new Notice(fragment, 0);
 		this.loginRequiredNotice = notice;
 		button.addEventListener("click", () => {

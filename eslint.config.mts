@@ -13,6 +13,7 @@ export default tseslint.config(
 				projectService: {
 					allowDefaultProject: [
 						'eslint.config.js',
+						'eslint.config.mts',
 						'manifest.json'
 					]
 				},
@@ -26,6 +27,21 @@ export default tseslint.config(
 		files: ["**/*.ts", "**/*.tsx"],
 		rules: {
 			"no-undef": "off", // TypeScript handles undefined-variable detection
+		},
+	},
+	{
+		// Mirror the type-aware rules the community-directory review bot
+		// layers on top of the plugin's recommended config. Scoped to src/ —
+		// the bot only reviews plugin source, and the config file itself is
+		// checked without full project type information.
+		files: ["src/**/*.ts"],
+		rules: {
+			"@typescript-eslint/no-unsafe-call": "error",
+			"@typescript-eslint/no-unsafe-assignment": "error",
+			"@typescript-eslint/no-unsafe-argument": "error",
+			"@typescript-eslint/no-unsafe-member-access": "error",
+			"@typescript-eslint/no-unsafe-return": "error",
+			"@typescript-eslint/no-unnecessary-type-assertion": "error",
 		},
 	},
 	{
@@ -61,6 +77,16 @@ export default tseslint.config(
 				],
 				ignoreRegex: ["garmin\\.(com|cn)"],
 			}],
+		},
+	},
+	{
+		// The config file is linted via allowDefaultProject without full type
+		// information, so type-aware rules produce false "error typed" hits.
+		files: ["eslint.config.mts"],
+		rules: {
+			"@typescript-eslint/no-unsafe-assignment": "off",
+			"@typescript-eslint/no-unsafe-call": "off",
+			"@typescript-eslint/no-unsafe-member-access": "off",
 		},
 	},
 	globalIgnores([

@@ -46,7 +46,7 @@ function findUrlInArgs(args: unknown[]): string {
 	}
 	for (const a of args) {
 		if (a && typeof a === "object" && "url" in a) {
-			const u = (a as { url: unknown }).url;
+			const u = a.url;
 			if (typeof u === "string") return u;
 		}
 	}
@@ -474,7 +474,7 @@ export class GarminApi {
 					for (const a of args) {
 						if (typeof a === "string" && a.indexOf("GHS_DIAG") >= 0) { msg = a; break; }
 						if (a && typeof a === "object" && "message" in a) {
-							const m = (a as { message: unknown }).message;
+							const m = a.message;
 							if (typeof m === "string" && m.indexOf("GHS_DIAG") >= 0) { msg = m; break; }
 						}
 					}

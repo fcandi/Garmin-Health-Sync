@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+### Internal
+
+- Resolve all type-safety warnings from the community-directory review: the TypeScript `lib` setting now matches the APIs the code actually uses (`Object.entries`, `padStart`, named regex groups), which removes every `no-unsafe-*` finding; the session-expired notice uses Obsidian's `createEl` helpers instead of `document.createElement`; two redundant type assertions dropped. The local lint config now mirrors the review bot's type-aware rules so this class of finding is caught before release. No functional changes.
+
 ## 0.10.0
 
 ### Changed
