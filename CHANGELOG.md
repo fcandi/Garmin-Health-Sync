@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0
+
+### Changed
+
+- The settings tab now uses Obsidian's declarative settings API (`getSettingDefinitions()`), resolving the community-directory review warning about the deprecated imperative `display()` approach. Settings are unchanged in content; extended metrics moved from an inline collapsible section to a navigable sub-page, and plugin settings now appear in Obsidian's settings search.
+- **Requires Obsidian 1.13.0 or newer.** Users on older Obsidian versions stay on 0.9.11.
+
 ## 0.9.11
 
 ### Internal

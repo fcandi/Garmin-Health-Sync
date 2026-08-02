@@ -64,6 +64,7 @@ export default tseslint.config(
 		},
 	},
 	globalIgnores([
+		".claude", // worktrees of parallel sessions carry their own checkouts
 		"node_modules",
 		"dist",
 		"esbuild.config.mjs",

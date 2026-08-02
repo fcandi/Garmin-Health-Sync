@@ -1,4 +1,10 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import {
+	App,
+	PluginSettingTab,
+	Setting,
+	SettingDefinition,
+	SettingDefinitionItem,
+} from "obsidian";
 import type HealthSyncPlugin from "./main";
 import { METRICS, getDefaultEnabledMetrics } from "./metrics";
 import { t } from "./i18n/t";
@@ -9,6 +15,13 @@ const IMPERIAL_LABEL_MAP: Partial<Record<string, TranslationKeys>> = {
 	distance_km: "metric_distance_mi",
 	weight_kg: "metric_weight_lbs",
 };
+
+/**
+ * Control-key prefix for per-metric toggles. Metric enablement lives in the
+ * nested `enabledMetrics` record, so the flat declarative keys are namespaced
+ * and mapped back in `getControlValue`/`setControlValue`.
+ */
+const METRIC_KEY_PREFIX = "metric:";
 
 export type ServerRegion = "international" | "china";
 export type UnitSystem = "metric" | "imperial";
@@ -57,203 +70,200 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
-		const { containerEl } = this;
+	getSettingDefinitions(): SettingDefinitionItem[] {
 		const lang = this.plugin.settings.language;
-		containerEl.empty();
 
-		// Language
-		new Setting(containerEl)
-			.setName(t("settingsLanguage", lang))
-			.setDesc(t("settingsLanguageDesc", lang))
-			.addDropdown(drop => drop
-				.addOption("en", "English")
-				.addOption("de", "Deutsch")
-				.addOption("zh", "中文")
-				.addOption("ja", "日本語")
-				.addOption("es", "Español")
-				.addOption("fr", "Français")
-				.setValue(this.plugin.settings.language)
-				.onChange(async (value) => {
-					this.plugin.settings.language = value;
-					await this.plugin.saveSettings();
-					this.display();
-				}));
-
-		// Server Region
-		new Setting(containerEl)
-			.setName(t("settingsServerRegion", lang))
-			.setDesc(t("settingsServerRegionDesc", lang))
-			.addDropdown(drop => drop
-				.addOption("international", t("regionInternational", lang))
-				.addOption("china", t("regionChina", lang))
-				.setValue(this.plugin.settings.serverRegion)
-				.onChange(async (value) => {
-					this.plugin.settings.serverRegion = value as ServerRegion;
-					await this.plugin.saveSettings();
-					this.plugin.applyServerRegion();
-					this.display();
-				}));
-
-		// Unit System
-		new Setting(containerEl)
-			.setName(t("settingsUnitSystem", lang))
-			.setDesc(t("settingsUnitSystemDesc", lang))
-			.addDropdown(drop => drop
-				.addOption("metric", t("unitMetric", lang))
-				.addOption("imperial", t("unitImperial", lang))
-				.setValue(this.plugin.settings.unitSystem)
-				.onChange(async (value) => {
-					this.plugin.settings.unitSystem = value as UnitSystem;
-					await this.plugin.saveSettings();
-					this.display();
-				}));
-
-		// Garmin Login. On needsUserLogin the OAuth tokens are discarded → appears
-		// as "not connected"; transient errors leave the tokens in place and are
+		// On needsUserLogin the OAuth tokens are discarded → appears as "not
+		// connected"; transient errors leave the tokens in place and are
 		// automatically retried with backoff (no separate UI state needed).
 		const hasSavedSession = this.plugin.isSessionValid();
 		const garminStatus = hasSavedSession
 			? t("settingsGarminLoggedIn", lang)
 			: t("settingsGarminLoggedOut", lang);
-		const loginSetting = new Setting(containerEl)
-			.setName(t("settingsGarminLogin", lang))
-			.setDesc(`${garminStatus}. ${t("settingsGarminSessionPrivacyDesc", lang)}`);
+
+		return [
+			{
+				name: t("settingsLanguage", lang),
+				desc: t("settingsLanguageDesc", lang),
+				control: {
+					type: "dropdown",
+					key: "language",
+					options: {
+						en: "English",
+						de: "Deutsch",
+						zh: "中文",
+						ja: "日本語",
+						es: "Español",
+						fr: "Français",
+					},
+				},
+			},
+			{
+				name: t("settingsServerRegion", lang),
+				desc: t("settingsServerRegionDesc", lang),
+				control: {
+					type: "dropdown",
+					key: "serverRegion",
+					options: {
+						international: t("regionInternational", lang),
+						china: t("regionChina", lang),
+					},
+				},
+			},
+			{
+				name: t("settingsUnitSystem", lang),
+				desc: t("settingsUnitSystemDesc", lang),
+				control: {
+					type: "dropdown",
+					key: "unitSystem",
+					options: {
+						metric: t("unitMetric", lang),
+						imperial: t("unitImperial", lang),
+					},
+				},
+			},
+			{
+				name: t("settingsGarminLogin", lang),
+				desc: `${garminStatus}. ${t("settingsGarminSessionPrivacyDesc", lang)}`,
+				render: (setting) => this.renderGarminLogin(setting, hasSavedSession),
+			},
+			{
+				name: t("settingsAutoSync", lang),
+				desc: t("settingsAutoSyncDesc", lang),
+				control: { type: "toggle", key: "autoSync" },
+			},
+			{
+				name: t("settingsDailyNotePath", lang),
+				desc: t("settingsDailyNotePathDesc", lang),
+				control: { type: "text", key: "dailyNotePath" },
+			},
+			{
+				name: t("settingsDailyNoteFormat", lang),
+				desc: t("settingsDailyNoteFormatDesc", lang),
+				control: { type: "text", key: "dailyNoteFormat" },
+			},
+			{
+				name: t("settingsDailyNoteTemplate", lang),
+				desc: t("settingsDailyNoteTemplateDesc", lang),
+				control: { type: "textarea", key: "dailyNoteTemplate", rows: 4 },
+			},
+			{
+				name: t("settingsPrefix", lang),
+				desc: t("settingsPrefixDesc", lang),
+				control: { type: "toggle", key: "usePrefix" },
+			},
+			{
+				name: t("settingsWriteWorkoutLocation", lang),
+				desc: t("settingsWriteWorkoutLocationDesc", lang),
+				control: { type: "toggle", key: "writeWorkoutLocation" },
+			},
+			{
+				name: t("settingsWriteTrainings", lang),
+				desc: t("settingsWriteTrainingsDesc", lang),
+				control: { type: "toggle", key: "writeTrainings" },
+			},
+			{
+				type: "group",
+				heading: t("settingsMetricsStandard", lang),
+				items: this.metricToggleDefinitions("standard", lang),
+			},
+			{
+				type: "page",
+				name: t("settingsMetricsExtendedDesc", lang),
+				items: [
+					{
+						type: "group",
+						items: this.metricToggleDefinitions("extended", lang),
+					},
+				],
+			},
+		];
+	}
+
+	getControlValue(key: string): unknown {
+		if (key.startsWith(METRIC_KEY_PREFIX)) {
+			const metricKey = key.slice(METRIC_KEY_PREFIX.length);
+			const metric = METRICS.find((m) => m.key === metricKey);
+			return this.plugin.settings.enabledMetrics[metricKey] ?? metric?.defaultEnabled ?? false;
+		}
+		return this.plugin.settings[key as keyof HealthSyncSettings];
+	}
+
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		if (key.startsWith(METRIC_KEY_PREFIX)) {
+			const metricKey = key.slice(METRIC_KEY_PREFIX.length);
+			this.plugin.settings.enabledMetrics[metricKey] = Boolean(value);
+			await this.plugin.saveSettings();
+			return;
+		}
+
+		const settings = this.plugin.settings as unknown as Record<string, unknown>;
+		settings[key] = value;
+		await this.plugin.saveSettings();
+
+		if (key === "serverRegion") {
+			this.plugin.applyServerRegion();
+		} else if (key === "language" || key === "unitSystem") {
+			// Rebuild the definitions so labels reflect the new locale / units.
+			this.update();
+		}
+	}
+
+	private metricToggleDefinitions(
+		category: "standard" | "extended",
+		lang: string
+	): SettingDefinition[] {
+		const isImperial = this.plugin.settings.unitSystem === "imperial";
+		return METRICS.filter((m) => m.category === category).map((metric) => {
+			const labelKey =
+				(isImperial && IMPERIAL_LABEL_MAP[metric.key]) ||
+				(`metric_${metric.key}` as TranslationKeys);
+			return {
+				name: t(labelKey, lang),
+				control: { type: "toggle", key: `${METRIC_KEY_PREFIX}${metric.key}` },
+			};
+		});
+	}
+
+	/**
+	 * Login/logout row. Returns a cleanup callback — the row is re-rendered on
+	 * every update() (e.g. after login state or language changes), and without
+	 * it each pass would append another set of buttons.
+	 */
+	private renderGarminLogin(setting: Setting, hasSavedSession: boolean): () => void {
+		const lang = this.plugin.settings.language;
+		const buttonEls: HTMLButtonElement[] = [];
 
 		if (hasSavedSession) {
-			loginSetting.addButton(btn => btn
-				.setButtonText(t("settingsGarminLogout", lang))
-				.onClick(async () => {
+			setting.addButton((btn) => {
+				buttonEls.push(btn.buttonEl);
+				btn.setButtonText(t("settingsGarminLogout", lang)).onClick(async () => {
 					await this.plugin.logout();
-					this.display();
-				}));
+					this.update();
+				});
+			});
 		} else {
-			loginSetting.addButton(btn => btn
-				.setButtonText(t("settingsGarminLogin", lang))
-				.setCta()
-				.onClick(async () => {
-					await this.plugin.loginViaBrowser();
-					this.display();
-				}));
+			setting.addButton((btn) => {
+				buttonEls.push(btn.buttonEl);
+				btn.setButtonText(t("settingsGarminLogin", lang))
+					.setCta()
+					.onClick(async () => {
+						await this.plugin.loginViaBrowser();
+						this.update();
+					});
+			});
 			// Manual-ticket fallback (issue #6) for accounts where the embedded
 			// login window never completes the sign-in.
-			loginSetting.addButton(btn => btn
-				.setButtonText(t("settingsGarminManualLogin", lang))
-				.setTooltip(t("settingsGarminManualLoginTooltip", lang))
-				.onClick(() => {
-					this.plugin.openManualLogin(() => this.display());
-				}));
-		}
-
-		// Auto-Sync
-		new Setting(containerEl)
-			.setName(t("settingsAutoSync", lang))
-			.setDesc(t("settingsAutoSyncDesc", lang))
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autoSync)
-				.onChange(async (value) => {
-					this.plugin.settings.autoSync = value;
-					await this.plugin.saveSettings();
-					this.display();
-				}));
-
-		// Daily Notes
-		new Setting(containerEl)
-			.setName(t("settingsDailyNotePath", lang))
-			.setDesc(t("settingsDailyNotePathDesc", lang))
-			.addText(text => text
-				.setValue(this.plugin.settings.dailyNotePath)
-				.onChange(async (value) => {
-					this.plugin.settings.dailyNotePath = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName(t("settingsDailyNoteFormat", lang))
-			.setDesc(t("settingsDailyNoteFormatDesc", lang))
-			.addText(text => text
-				.setValue(this.plugin.settings.dailyNoteFormat)
-				.onChange(async (value) => {
-					this.plugin.settings.dailyNoteFormat = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName(t("settingsDailyNoteTemplate", lang))
-			.setDesc(t("settingsDailyNoteTemplateDesc", lang))
-			.addTextArea(text => {
-				text.setPlaceholder("")
-					.setValue(this.plugin.settings.dailyNoteTemplate)
-					.onChange(async (value) => {
-						this.plugin.settings.dailyNoteTemplate = value;
-						await this.plugin.saveSettings();
+			setting.addButton((btn) => {
+				buttonEls.push(btn.buttonEl);
+				btn.setButtonText(t("settingsGarminManualLogin", lang))
+					.setTooltip(t("settingsGarminManualLoginTooltip", lang))
+					.onClick(() => {
+						this.plugin.openManualLogin(() => this.update());
 					});
-				text.inputEl.rows = 4;
 			});
-
-		// Prefix
-		new Setting(containerEl)
-			.setName(t("settingsPrefix", lang))
-			.setDesc(t("settingsPrefixDesc", lang))
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.usePrefix)
-				.onChange(async (value) => {
-					this.plugin.settings.usePrefix = value;
-					await this.plugin.saveSettings();
-				}));
-
-		// Workout Location
-		new Setting(containerEl)
-			.setName(t("settingsWriteWorkoutLocation", lang))
-			.setDesc(t("settingsWriteWorkoutLocationDesc", lang))
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.writeWorkoutLocation)
-				.onChange(async (value) => {
-					this.plugin.settings.writeWorkoutLocation = value;
-					await this.plugin.saveSettings();
-				}));
-
-		// Machine-readable trainings
-		new Setting(containerEl)
-			.setName(t("settingsWriteTrainings", lang))
-			.setDesc(t("settingsWriteTrainingsDesc", lang))
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.writeTrainings)
-				.onChange(async (value) => {
-					this.plugin.settings.writeTrainings = value;
-					await this.plugin.saveSettings();
-				}));
-
-		// Standard metrics
-		const isImperial = this.plugin.settings.unitSystem === "imperial";
-		new Setting(containerEl).setName(t("settingsMetricsStandard", lang)).setHeading();
-		for (const metric of METRICS.filter(m => m.category === "standard")) {
-			const labelKey = (isImperial && IMPERIAL_LABEL_MAP[metric.key]) || `metric_${metric.key}` as TranslationKeys;
-			new Setting(containerEl)
-				.setName(t(labelKey, lang))
-				.addToggle(toggle => toggle
-					.setValue(this.plugin.settings.enabledMetrics[metric.key] ?? metric.defaultEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.enabledMetrics[metric.key] = value;
-						await this.plugin.saveSettings();
-					}));
 		}
 
-		// Extended metrics (collapsed)
-		const extDetails = containerEl.createEl("details");
-		extDetails.createEl("summary", { text: t("settingsMetricsExtendedDesc", lang) });
-
-		for (const metric of METRICS.filter(m => m.category === "extended")) {
-			const labelKey = (isImperial && IMPERIAL_LABEL_MAP[metric.key]) || `metric_${metric.key}` as TranslationKeys;
-			new Setting(extDetails)
-				.setName(t(labelKey, lang))
-				.addToggle(toggle => toggle
-					.setValue(this.plugin.settings.enabledMetrics[metric.key] ?? metric.defaultEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.enabledMetrics[metric.key] = value;
-						await this.plugin.saveSettings();
-					}));
-		}
-
+		return () => buttonEls.forEach((el) => el.remove());
 	}
 }
