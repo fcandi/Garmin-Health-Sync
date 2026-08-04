@@ -17,7 +17,7 @@
 - **运动追踪** —— 每次锻炼以易读的摘要形式呈现
 - **运动地点** —— 通过逆地理编码获取首个 GPS 活动的地名
 - **智能检测** —— 自动识别你的 Daily Notes 路径和格式（来自 Periodic Notes 或内置 Daily Notes 插件）
-- **子目录支持** —— 在嵌套文件夹中查找已有的 Daily Notes（例如 `Journal/2024-07/`）
+- **子目录支持** —— 在嵌套文件夹中查找已有的 Daily Notes（例如 `Journal/2024-07/`）；文件名格式包含 `/` 时会按日期创建子文件夹（例如 `YYYY/YYYY-MM-DD` → `Journal/2026/2026-08-04.md`）
 - **语言自动检测** —— UI 语言根据你的 Obsidian 语言设置自动适配（EN、DE、ZH、JA、ES、FR）
 - **可选的结构化数据** —— 机器可读的 `trainings` 字段，用于高级 Dataview 查询
 
@@ -96,6 +96,19 @@ trainings:
 4. 在设置 → Community Plugins 中启用插件
 
 ## 使用方法
+
+### 笔记的存放位置
+
+**每日笔记路径**是文件夹，**每日笔记格式**是采用 [moment.js](https://momentjs.com/docs/#/displaying/format/) 语法的文件名，与内置 Daily Notes 插件的约定一致。格式本身可以包含 `/`，从而把笔记放入按日期划分的子文件夹；方括号内的文本保持原样：
+
+| 路径 | 格式 | 结果 |
+| --- | --- | --- |
+| `Journal` | `YYYY-MM-DD` | `Journal/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM-DD` | `Journal/2026/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM/YYYY-MM-DD` | `Journal/2026/2026-08/2026-08-04.md` |
+| `Journal` | `YYYY-MM-DD [Workout]` | `Journal/2026-08-04 Workout.md` |
+
+缺失的子文件夹会自动创建。
 
 ### 自动同步
 

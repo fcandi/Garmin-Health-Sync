@@ -27,7 +27,7 @@ export const es: Record<TranslationKeys, string> = {
 	settingsDailyNotePath: "Ruta de notas diarias",
 	settingsDailyNotePathDesc: "Ruta a la carpeta de notas diarias",
 	settingsDailyNoteFormat: "Formato de nota diaria",
-	settingsDailyNoteFormatDesc: "Formato de fecha para nombres de notas diarias",
+	settingsDailyNoteFormatDesc: "Formato de fecha para nombres de notas diarias. Una barra crea subcarpetas por fecha y los corchetes mantienen el texto literal (ejemplos en el readme)",
 	settingsWriteWorkoutLocation: "Ubicación del entrenamiento",
 	settingsWriteWorkoutLocationDesc: "Añadir nombre del lugar de la primera actividad GPS al frontmatter",
 	settingsWriteTrainings: "Entrenamientos legibles por máquina",

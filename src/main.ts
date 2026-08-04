@@ -15,6 +15,56 @@ const NO_DATA_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1h cooldown for dates that re
 const CLEANUP_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 const LOGIN_NOTICE_THROTTLE_MS = 10 * 60 * 1000; // 10min: re-show login notice no more often than this
 
+/** Date tokens understood when parsing a note path back into a date. */
+const DATE_TOKENS: { token: string; group: string; digits: number }[] = [
+	{ token: "YYYY", group: "year", digits: 4 },
+	{ token: "MM", group: "month", digits: 2 },
+	{ token: "DD", group: "day", digits: 2 },
+];
+
+function escapeRegex(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Builds a regex that recovers year/month/day from a path formatted with the
+ * given moment format. Understands the YYYY, MM and DD tokens plus moment's
+ * literal escapes ("[text]"); every other character is matched verbatim.
+ * A token that appears more than once becomes a backreference, so
+ * "YYYY/YYYY-MM-DD" only matches when both years agree.
+ */
+function dateFormatToRegex(format: string): RegExp {
+	const seen = new Set<string>();
+	let pattern = "";
+
+	for (let i = 0; i < format.length; ) {
+		// moment escape: [literal text] is taken verbatim, tokens inside are not expanded
+		if (format[i] === "[") {
+			const end = format.indexOf("]", i + 1);
+			if (end !== -1) {
+				pattern += escapeRegex(format.substring(i + 1, end));
+				i = end + 1;
+				continue;
+			}
+		}
+
+		const token = DATE_TOKENS.find(t => format.startsWith(t.token, i));
+		if (token) {
+			pattern += seen.has(token.token)
+				? `\\k<${token.group}>`
+				: `(?<${token.group}>\\d{${token.digits}})`;
+			seen.add(token.token);
+			i += token.token.length;
+			continue;
+		}
+
+		pattern += escapeRegex(format.charAt(i));
+		i += 1;
+	}
+
+	return new RegExp(`^${pattern}$`);
+}
+
 export default class HealthSyncPlugin extends Plugin {
 	settings: HealthSyncSettings;
 	private syncManager: SyncManager;
@@ -507,23 +557,34 @@ export default class HealthSyncPlugin extends Plugin {
 		return false;
 	}
 
+	/**
+	 * Recovers the date a note belongs to from its path.
+	 *
+	 * The filename format may itself contain "/" (the core Daily Notes plugin
+	 * allows this, and writeToDailyNote creates the matching subfolders), so the
+	 * format is matched against the note path *relative to the configured
+	 * folder* — matching the basename alone would silently fail for everyone
+	 * using a format like "YYYY/YYYY-MM-DD".
+	 */
 	private dateFromDailyNote(file: TFile): string | null {
 		const format = this.settings.dailyNoteFormat || "YYYY-MM-DD";
-		const path = this.settings.dailyNotePath || "";
+		const basePath = (this.settings.dailyNotePath || "").replace(/^\/+|\/+$/g, "");
 
-		const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-		if (path && dir !== path && !dir.startsWith(path + "/")) return null;
-		if (!path && dir !== "") return null;
+		const notePath = file.path.replace(/\.md$/i, "");
+		let relative = notePath;
+		if (basePath) {
+			if (!notePath.startsWith(basePath + "/")) return null;
+			relative = notePath.substring(basePath.length + 1);
+		}
 
-		const escaped = format
-			.replace("YYYY", "\x01")
-			.replace("MM", "\x02")
-			.replace("DD", "\x03")
-			.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-			.replace("\x01", "(?<year>\\d{4})")
-			.replace("\x02", "(?<month>\\d{2})")
-			.replace("\x03", "(?<day>\\d{2})");
-		const match = file.basename.match(new RegExp(`^${escaped}$`));
+		const pattern = dateFormatToRegex(format);
+		let match = relative.match(pattern);
+
+		// Fallback: match the basename alone, so notes that were moved into
+		// hand-made subfolders below the configured folder stay recognisable.
+		if (!match && basePath && !format.includes("/")) {
+			match = file.basename.match(pattern);
+		}
 		if (!match?.groups) return null;
 
 		const { year, month, day } = match.groups;

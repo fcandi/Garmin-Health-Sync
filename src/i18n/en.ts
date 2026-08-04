@@ -25,7 +25,7 @@ export const en = {
 	settingsDailyNotePath: "Daily notes path",
 	settingsDailyNotePathDesc: "Path to your daily notes folder",
 	settingsDailyNoteFormat: "Daily note format",
-	settingsDailyNoteFormatDesc: "Date format for daily notes filenames",
+	settingsDailyNoteFormatDesc: "Date format for daily note filenames. A slash creates date-based subfolders, square brackets keep text literal (see the readme for examples)",
 	settingsWriteWorkoutLocation: "Workout location",
 	settingsWriteWorkoutLocationDesc: "Add place name of first GPS activity to frontmatter",
 	settingsWriteTrainings: "Machine-readable trainings",

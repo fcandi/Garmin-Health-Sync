@@ -27,7 +27,7 @@ export const de: Record<TranslationKeys, string> = {
 	settingsDailyNotePath: "Daily Notes Pfad",
 	settingsDailyNotePathDesc: "Pfad zum Daily Notes Ordner",
 	settingsDailyNoteFormat: "Daily Note Format",
-	settingsDailyNoteFormatDesc: "Datumsformat für Daily Notes Dateinamen",
+	settingsDailyNoteFormatDesc: "Datumsformat für Daily-Notes-Dateinamen. Ein Schrägstrich erzeugt datumsbasierte Unterordner, eckige Klammern übernehmen Text wörtlich (Beispiele in der Readme)",
 	settingsWriteWorkoutLocation: "Workout-Ort",
 	settingsWriteWorkoutLocationDesc: "Ortsname der ersten GPS-Aktivität im Frontmatter hinzufügen",
 	settingsWriteTrainings: "Maschinenlesbare Trainings",

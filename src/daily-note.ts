@@ -22,6 +22,11 @@ function findDailyNoteRecursive(app: App, fileName: string, basePath: string): T
 	const directFile = app.vault.getAbstractFileByPath(directPath);
 	if (directFile instanceof TFile) return directFile;
 
+	// A format containing "/" (e.g. "YYYY/YYYY-MM-DD") pins the note to an exact
+	// subfolder — the recursive search below matches on file name only and could
+	// never find it, so skip the pointless vault walk.
+	if (fileName.includes("/")) return null;
+
 	// 2. Search recursively in subdirectories
 	const baseFolder = app.vault.getAbstractFileByPath(normalizePath(basePath));
 	if (!(baseFolder instanceof TFolder)) return null;

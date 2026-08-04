@@ -17,7 +17,7 @@ Garmin Connect から歩数、睡眠、心拍数、ストレス、アクティ�
 - **アクティビティ追跡** — 各ワークアウトが読みやすいサマリーとして表示
 - **ワークアウトの場所** — 最初の GPS アクティビティから逆ジオコーディングで取得した地名
 - **スマート検出** — Periodic Notes または内蔵の Daily Notes プラグインから Daily Notes のパスとフォーマットを自動検出
-- **サブディレクトリ対応** — ネストされたフォルダ内の既存 Daily Notes を検索（例：`Journal/2024-07/`）
+- **サブディレクトリ対応** — ネストされたフォルダ内の既存 Daily Notes を検索（例：`Journal/2024-07/`）。ファイル名形式に `/` を含めると日付ごとのサブフォルダを作成（例：`YYYY/YYYY-MM-DD` → `Journal/2026/2026-08-04.md`）
 - **言語自動検出** — UI 言語は Obsidian の言語設定に基づいて自動設定（EN、DE、ZH、JA、ES、FR）
 - **オプションの構造化データ** — 高度な Dataview クエリ用の機械可読 `trainings` フィールド
 
@@ -96,6 +96,19 @@ trainings:
 4. 設定 → Community Plugins でプラグインを有効化
 
 ## 使い方
+
+### ノートの保存場所
+
+**デイリーノートのパス**がフォルダ、**デイリーノートの形式**が [moment.js](https://momentjs.com/docs/#/displaying/format/) 構文によるファイル名で、標準の Daily Notes プラグインと同じ規則です。形式自体に `/` を含めると日付ごとのサブフォルダに配置でき、角かっこ内の文字列はそのまま使われます:
+
+| パス | 形式 | 結果 |
+| --- | --- | --- |
+| `Journal` | `YYYY-MM-DD` | `Journal/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM-DD` | `Journal/2026/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM/YYYY-MM-DD` | `Journal/2026/2026-08/2026-08-04.md` |
+| `Journal` | `YYYY-MM-DD [Workout]` | `Journal/2026-08-04 Workout.md` |
+
+存在しないサブフォルダは自動的に作成されます。
 
 ### 自動同期
 

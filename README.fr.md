@@ -17,7 +17,7 @@ Synchronisez automatiquement les pas, le sommeil, la fréquence cardiaque, le st
 - **Suivi des activités** — chaque entraînement apparaît sous forme de résumé lisible
 - **Lieu d'entraînement** — nom du lieu obtenu par géocodage inverse de votre première activité GPS
 - **Détection intelligente** — détecte automatiquement le chemin et le format de vos Daily Notes depuis Periodic Notes ou le plugin natif Daily Notes
-- **Support des sous-dossiers** — trouve les Daily Notes existantes dans les dossiers imbriqués (par ex. `Journal/2024-07/`)
+- **Support des sous-dossiers** — trouve les Daily Notes existantes dans les dossiers imbriqués (par ex. `Journal/2024-07/`) et crée des sous-dossiers par date lorsque le format du nom de fichier contient `/` (par ex. `YYYY/YYYY-MM-DD` → `Journal/2026/2026-08-04.md`)
 - **Détection automatique de la langue** — la langue de l'interface est définie selon la langue de votre Obsidian (EN, DE, ZH, JA, ES, FR)
 - **Données structurées optionnelles** — champ `trainings` lisible par machine pour des requêtes Dataview avancées
 
@@ -96,6 +96,19 @@ trainings:
 4. Activez le plugin dans Paramètres → Community Plugins
 
 ## Utilisation
+
+### Où sont enregistrées les notes
+
+Le **chemin des notes quotidiennes** correspond au dossier, le **format de note quotidienne** au nom de fichier en syntaxe [moment.js](https://momentjs.com/docs/#/displaying/format/) — la même convention que le plugin Daily Notes intégré. Le format peut lui-même contenir un `/` pour ranger les notes dans des sous-dossiers par date, et les crochets conservent le texte littéral :
+
+| Chemin | Format | Résultat |
+| --- | --- | --- |
+| `Journal` | `YYYY-MM-DD` | `Journal/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM-DD` | `Journal/2026/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM/YYYY-MM-DD` | `Journal/2026/2026-08/2026-08-04.md` |
+| `Journal` | `YYYY-MM-DD [Workout]` | `Journal/2026-08-04 Workout.md` |
+
+Les sous-dossiers manquants sont créés automatiquement.
 
 ### Synchronisation automatique
 

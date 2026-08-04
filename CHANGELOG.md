@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.3-beta.1
+
+### Fixed
+
+- Daily notes whose filename format contains `/` (e.g. `YYYY/YYYY-MM-DD`, a common setting in the core Daily Notes plugin that this plugin adopts automatically) were written to the right subfolder but no longer recognised as daily notes: auto-sync did not trigger when opening them, and **Sync current note** silently fell back to yesterday's date instead of the open note's date. The date is now recovered from the note path relative to the configured folder instead of from the filename alone. Formats without `/` keep matching at any depth below the configured folder, so existing setups are unaffected.
+- The filename format now also understands moment's literal escapes, so a format like `YYYY-MM-DD [Workout]` is recognised as well. Repeated tokens must agree (`YYYY/YYYY-MM-DD` no longer matches a note filed under the wrong year).
+
+### Documentation
+
+- The readme (all languages) documents how folder, filename format and date-based subfolders interact, including examples.
+
 ## 0.10.2
 
 ### Internal

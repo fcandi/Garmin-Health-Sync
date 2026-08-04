@@ -27,7 +27,7 @@ export const zh: Record<TranslationKeys, string> = {
 	settingsDailyNotePath: "每日笔记路径",
 	settingsDailyNotePathDesc: "每日笔记文件夹路径",
 	settingsDailyNoteFormat: "每日笔记格式",
-	settingsDailyNoteFormatDesc: "每日笔记文件名的日期格式",
+	settingsDailyNoteFormatDesc: "每日笔记文件名的日期格式。斜杠会按日期创建子文件夹，方括号内的文本保持原样（示例见 readme）",
 	settingsWriteWorkoutLocation: "训练地点",
 	settingsWriteWorkoutLocationDesc: "在 frontmatter 中添加第一个 GPS 活动的地名",
 	settingsWriteTrainings: "机器可读训练数据",

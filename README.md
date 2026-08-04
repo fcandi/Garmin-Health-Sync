@@ -17,7 +17,7 @@ Sync steps, sleep, heart rate, stress, activities and more from Garmin Connect i
 - **Activity tracking** — each workout appears as a human-readable summary
 - **Workout location** — reverse-geocoded place name from your first GPS activity
 - **Smart detection** — automatically picks up your Daily Notes path and format from Periodic Notes or the core Daily Notes plugin
-- **Subdirectory support** — finds existing Daily Notes in nested folders (e.g. `Journal/2024-07/`)
+- **Subdirectory support** — finds existing Daily Notes in nested folders (e.g. `Journal/2024-07/`), and creates date-based subfolders when the filename format contains `/` (e.g. `YYYY/YYYY-MM-DD` → `Journal/2026/2026-08-04.md`)
 - **Language auto-detection** — UI language is set from your Obsidian language (EN, DE, ZH, JA, ES, FR)
 - **Optional structured data** — machine-readable `trainings` field for advanced Dataview queries
 - **Property prefix** — optionally adds an `ohs_` prefix to all frontmatter properties to avoid naming conflicts with other plugins
@@ -97,6 +97,19 @@ trainings:
 4. Enable the plugin in Settings → Community Plugins
 
 ## Usage
+
+### Where notes are stored
+
+The **daily notes path** is the folder, the **daily note format** is the filename in [moment.js](https://momentjs.com/docs/#/displaying/format/) syntax — the same convention as the core Daily Notes plugin. The format itself may contain `/` to nest notes into date-based subfolders, and square brackets keep text literal:
+
+| Path | Format | Result |
+| --- | --- | --- |
+| `Journal` | `YYYY-MM-DD` | `Journal/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM-DD` | `Journal/2026/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM/YYYY-MM-DD` | `Journal/2026/2026-08/2026-08-04.md` |
+| `Journal` | `YYYY-MM-DD [Workout]` | `Journal/2026-08-04 Workout.md` |
+
+Missing subfolders are created automatically.
 
 ### Auto-sync
 

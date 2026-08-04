@@ -27,7 +27,7 @@ export const ja: Record<TranslationKeys, string> = {
 	settingsDailyNotePath: "デイリーノートのパス",
 	settingsDailyNotePathDesc: "デイリーノートフォルダのパス",
 	settingsDailyNoteFormat: "デイリーノートの形式",
-	settingsDailyNoteFormatDesc: "デイリーノートファイル名の日付形式",
+	settingsDailyNoteFormatDesc: "デイリーノートファイル名の日付形式。スラッシュで日付ごとのサブフォルダを作成し、角かっこ内の文字列はそのまま使われます（例は readme を参照）",
 	settingsWriteWorkoutLocation: "ワークアウト場所",
 	settingsWriteWorkoutLocationDesc: "最初のGPSアクティビティの地名をフロントマターに追加",
 	settingsWriteTrainings: "機械可読トレーニングデータ",

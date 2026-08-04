@@ -17,7 +17,7 @@ Synchronisiere Schritte, Schlaf, Herzfrequenz, Stress, Aktivitäten und mehr aut
 - **Aktivitäts-Tracking** — jedes Workout erscheint als gut lesbare Zusammenfassung
 - **Workout-Standort** — per Reverse-Geocoding ermittelter Ortsname deiner ersten GPS-Aktivität
 - **Intelligente Erkennung** — erkennt automatisch deinen Daily-Notes-Pfad und das Format aus Periodic Notes oder dem eingebauten Daily Notes Plugin
-- **Unterordner-Unterstützung** — findet bestehende Daily Notes in verschachtelten Ordnern (z.B. `Journal/2024-07/`)
+- **Unterordner-Unterstützung** — findet bestehende Daily Notes in verschachtelten Ordnern (z.B. `Journal/2024-07/`) und legt datumsbasierte Unterordner an, wenn das Dateinamen-Format ein `/` enthält (z.B. `YYYY/YYYY-MM-DD` → `Journal/2026/2026-08-04.md`)
 - **Automatische Spracherkennung** — die UI-Sprache wird aus deiner Obsidian-Sprache übernommen (EN, DE, ZH, JA, ES, FR)
 - **Optionale strukturierte Daten** — maschinenlesbares `trainings`-Feld für erweiterte Dataview-Abfragen
 
@@ -96,6 +96,19 @@ trainings:
 4. Aktiviere das Plugin unter Einstellungen → Community Plugins
 
 ## Verwendung
+
+### Wo die Notizen liegen
+
+Der **Daily-Notes-Pfad** ist der Ordner, das **Daily-Note-Format** der Dateiname in [moment.js](https://momentjs.com/docs/#/displaying/format/)-Syntax — dieselbe Konvention wie im eingebauten Daily Notes Plugin. Das Format darf selbst ein `/` enthalten und die Notizen so in datumsbasierte Unterordner legen; eckige Klammern übernehmen Text wörtlich:
+
+| Pfad | Format | Ergebnis |
+| --- | --- | --- |
+| `Journal` | `YYYY-MM-DD` | `Journal/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM-DD` | `Journal/2026/2026-08-04.md` |
+| `Journal` | `YYYY/YYYY-MM/YYYY-MM-DD` | `Journal/2026/2026-08/2026-08-04.md` |
+| `Journal` | `YYYY-MM-DD [Workout]` | `Journal/2026-08-04 Workout.md` |
+
+Fehlende Unterordner werden automatisch angelegt.
 
 ### Auto-Sync
 
