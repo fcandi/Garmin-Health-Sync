@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.3-beta.2
+
+### Added
+
+- New setting **Create daily note when missing** (on by default, which matches the previous behaviour). When switched off, the background auto-sync no longer creates daily notes on its own: it waits until a real daily note for that day exists and only then writes the health data into it. This is for setups where another tool owns note creation — a template plugin, the Calendar plugin, or notes arriving from another device via a sync plugin — and the plugin should not race it.
+  - While waiting, the missing day costs no Garmin request and gets no cooldown; it is picked up the moment the note appears. Creating the note triggers the sync immediately, including notes that arrive through a vault sync from another device.
+  - Empty placeholder notes (for example the 0-byte file a click in the Calendar plugin creates) do not count as existing yet — the sync keeps waiting until the note has content.
+  - Manual **Sync current note** and **Backfill** are unaffected and still create notes, since they are explicit user actions.
+
 ## 0.10.3-beta.1
 
 ### Fixed
