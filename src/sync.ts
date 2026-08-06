@@ -1,10 +1,20 @@
 import { App, Notice } from "obsidian";
 import type { HealthProvider } from "./providers/provider";
-import { writeToDailyNote } from "./daily-note";
+import { writeToDailyNote, dailyNoteExists } from "./daily-note";
 import type { HealthSyncSettings } from "./settings";
 import { t } from "./i18n/t";
 import { convertToImperial } from "./units";
 import { isLoginRequiredError } from "./errors";
+
+/**
+ * Result of a single-date sync:
+ *  - "synced": data was fetched and written
+ *  - "no-data": the provider returned nothing for the date
+ *  - "skipped-missing-note": the daily note doesn't exist and creation is off —
+ *    no API call was made, so the caller should retry later without a cooldown
+ *  - "error": configuration/auth/transient failure
+ */
+export type SyncOutcome = "synced" | "no-data" | "skipped-missing-note" | "error";
 
 export class SyncManager {
 	private provider: HealthProvider;
@@ -16,11 +26,34 @@ export class SyncManager {
 	}
 
 	/** Sync for a specific date.
-	 * @param quiet Suppress per-date notices (used during auto-sync batch). */
-	async syncDate(date: string, settings: HealthSyncSettings, quiet = false): Promise<boolean> {
+	 * @param quiet Suppress per-date notices (used during auto-sync batch).
+	 * @param options.waitForNote When true, the sync waits for an existing
+	 *        (non-empty) daily note instead of creating one — set only by the
+	 *        background auto-sync when "create daily note when missing" is off.
+	 *        Manual sync and backfill leave it false and always create. */
+	async syncDate(
+		date: string,
+		settings: HealthSyncSettings,
+		quiet = false,
+		options: { waitForNote?: boolean } = {}
+	): Promise<SyncOutcome> {
+		const waitForNote = options.waitForNote ?? false;
+
 		if (!this.provider.isConfigured()) {
 			new Notice(t("noticeLoginRequired", settings.language));
-			return false;
+			return "error";
+		}
+
+		// Gate before any network call: in wait-for-note mode, skip without
+		// spending an API request until a real (non-empty) daily note exists.
+		// The caller retries at the next opportunity (no cooldown is set).
+		if (waitForNote && !dailyNoteExists(this.app, date, {
+			dailyNotePath: settings.dailyNotePath,
+			dailyNoteFormat: settings.dailyNoteFormat,
+		})) {
+			console.debug("Garmin Health Sync: daily note missing/empty, sync skipped (waiting for note) for", date);
+			if (!quiet) new Notice(t("noticeSyncWaitingForNote", settings.language).replace("{date}", date));
+			return "skipped-missing-note";
 		}
 
 		if (!quiet) new Notice(t("noticeSyncing", settings.language));
@@ -31,7 +64,7 @@ export class SyncManager {
 				const authenticated = await this.provider.authenticate();
 				if (!authenticated.ok) {
 					if (!quiet) new Notice(t("noticeSyncError", settings.language));
-					return false;
+					return "error";
 				}
 			}
 
@@ -47,7 +80,7 @@ export class SyncManager {
 			if (!hasData) {
 				console.warn("Garmin Health Sync: No data returned for", date);
 				if (!quiet) new Notice(t("noticeSyncNoData", settings.language));
-				return false;
+				return "no-data";
 			}
 
 			// Convert to imperial if configured
@@ -61,10 +94,14 @@ export class SyncManager {
 				template: settings.dailyNoteTemplate,
 				writeTrainings: settings.writeTrainings,
 				writeWorkoutLocation: settings.writeWorkoutLocation,
+				// In wait mode the gate above already confirmed the note exists;
+				// keep createIfMissing false as a safety net should it vanish
+				// mid-sync. Otherwise (manual/auto-with-creation) create as before.
+				createIfMissing: !waitForNote,
 			});
 
 			if (!quiet) new Notice(t("noticeSyncSuccess", settings.language));
-			return true;
+			return "synced";
 		} catch (error) {
 			if (isLoginRequiredError(error)) {
 				if (!quiet) new Notice(t("noticeLoginRequired", settings.language));
@@ -72,7 +109,7 @@ export class SyncManager {
 			}
 			console.error("Garmin Health Sync: Sync failed", error);
 			if (!quiet) new Notice(t("noticeSyncError", settings.language));
-			return false;
+			return "error";
 		}
 	}
 
@@ -110,6 +147,9 @@ export class SyncManager {
 
 					if (hasData) {
 						const outputData = settings.unitSystem === "imperial" ? convertToImperial(data) : data;
+						// Backfill is an explicit user action over a date range — it
+						// always creates missing notes, regardless of the auto-sync
+						// "create daily note when missing" setting.
 						await writeToDailyNote(this.app, date, outputData, {
 							dailyNotePath: settings.dailyNotePath,
 							dailyNoteFormat: settings.dailyNoteFormat,
@@ -117,6 +157,7 @@ export class SyncManager {
 							template: settings.dailyNoteTemplate,
 							writeTrainings: settings.writeTrainings,
 							writeWorkoutLocation: settings.writeWorkoutLocation,
+							createIfMissing: true,
 						});
 						count++;
 					}

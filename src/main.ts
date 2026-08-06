@@ -2,6 +2,7 @@ import { App, Modal, Notice, Plugin, Setting, TFile } from "obsidian";
 import { DEFAULT_SETTINGS, HealthSyncSettings, HealthSyncSettingTab } from "./settings";
 import { ManualLoginModal } from "./ui/manual-login-modal";
 import { SyncManager } from "./sync";
+import { matchDailyNoteDate } from "./daily-note";
 import { GarminProvider } from "./providers/garmin/garmin-provider";
 import type { OAuth1Token, OAuth2Token } from "./providers/garmin/garmin-oauth";
 import { t } from "./i18n/t";
@@ -70,6 +71,8 @@ export default class HealthSyncPlugin extends Plugin {
 	private syncManager: SyncManager;
 	private garminProvider: GarminProvider;
 	private autoSyncRunning = false;
+	private autoSyncResyncQueued = false;
+	private backfillRunning = false;
 	private lastAutoSyncAttempt = 0;
 	private loginRequiredNotice: Notice | null = null;
 	private lastLoginNoticeAt = 0;
@@ -102,6 +105,10 @@ export default class HealthSyncPlugin extends Plugin {
 			callback: () => {
 				new BackfillModal(this.app, this.settings.language, (from, to) => {
 					void (async () => {
+						// Suppress the create-trigger while backfill runs: backfill
+						// creates notes itself, and we don't want those create events
+						// to kick off a parallel auto-sync of the same fresh dates.
+						this.backfillRunning = true;
 						try {
 							await this.syncManager.backfill(from, to, this.settings);
 						} catch (error) {
@@ -114,6 +121,7 @@ export default class HealthSyncPlugin extends Plugin {
 								console.debug("Garmin Health Sync: Backfill failed — transient", error);
 							}
 						} finally {
+							this.backfillRunning = false;
 							// Tokens may have been refreshed/invalidated during the backfill → persist.
 							this.saveTokens();
 							await this.saveSettings();
@@ -136,6 +144,33 @@ export default class HealthSyncPlugin extends Plugin {
 		// On startup: auto-sync only — BrowserWindow opens on demand
 		this.app.workspace.onLayoutReady(() => {
 			void this.tryAutoSync();
+
+			// When "create daily note when missing" is off, the auto-sync waits for
+			// the note. Resume it the moment a real daily note within the sync window
+			// is created (by the user or another process). Registered here, not in
+			// onload, so it doesn't fire for every existing file during the initial
+			// vault load.
+			this.registerEvent(
+				this.app.vault.on("create", (file) => {
+					if (!this.settings.autoSync || this.settings.createDailyNoteIfMissing) return;
+					// Don't react to notes that backfill is creating right now.
+					if (this.backfillRunning) return;
+					if (!(file instanceof TFile)) return;
+					// Same formatDate()-based matcher the existence gate uses, so the
+					// trigger and the gate agree (handles subfolders/moment tokens and
+					// ignores 0-byte placeholders).
+					const noteDate = matchDailyNoteDate(this.app, file, this.autoSyncWindowDates(), {
+						dailyNotePath: this.settings.dailyNotePath,
+						dailyNoteFormat: this.settings.dailyNoteFormat,
+					});
+					if (noteDate) {
+						// Force past the 30s trigger-debounce: the startup sync may have
+						// just set the timestamp, and a freshly created note must not be
+						// swallowed by it.
+						void this.tryAutoSync({ force: true });
+					}
+				})
+			);
 		});
 
 		// Auto-sync when opening today's/yesterday's daily note
@@ -154,17 +189,25 @@ export default class HealthSyncPlugin extends Plugin {
 		this.garminProvider?.closeActiveLogin();
 	}
 
-	/** Auto-sync — checks the last 7 days, syncs missing or outdated data */
-	private async tryAutoSync(): Promise<void> {
+	/** Auto-sync — checks the last 7 days, syncs missing or outdated data.
+	 * @param options.force Bypass the 30s trigger-debounce. Used by the
+	 *        create-note trigger so a freshly created note is picked up at once. */
+	private async tryAutoSync(options: { force?: boolean } = {}): Promise<void> {
 		if (!this.settings.autoSync) return;
-		if (this.autoSyncRunning) return;
+		if (this.autoSyncRunning) {
+			// A pass is already in flight. If this is a forced resume (a note just
+			// appeared), queue exactly one more pass to run when it finishes — the
+			// running pass may already have skipped that date before it existed.
+			if (options.force) this.autoSyncResyncQueued = true;
+			return;
+		}
 		// Phase 7: The state machine decides. needsUserLogin pauses permanently,
 		// temporarilyUnavailable only until the backoff expires. No cookie probe
 		// anymore — the OAuth2 refresh happens silently in fetchDataForDate.
 		if (!this.garminProvider.shouldAttemptSync()) return;
 
 		const now = Date.now();
-		if (now - this.lastAutoSyncAttempt < AUTO_SYNC_TRIGGER_DEBOUNCE_MS) return;
+		if (!options.force && now - this.lastAutoSyncAttempt < AUTO_SYNC_TRIGGER_DEBOUNCE_MS) return;
 		this.lastAutoSyncAttempt = now;
 
 		const datesToSync = this.getAutoSyncDates();
@@ -183,6 +226,12 @@ export default class HealthSyncPlugin extends Plugin {
 			await this.runAutoSync(datesToSync);
 		} finally {
 			this.autoSyncRunning = false;
+			// A note created mid-run queued a follow-up — run it now (forced, so the
+			// debounce timestamp this pass just set can't swallow it).
+			if (this.autoSyncResyncQueued) {
+				this.autoSyncResyncQueued = false;
+				void this.tryAutoSync({ force: true });
+			}
 		}
 	}
 
@@ -216,6 +265,18 @@ export default class HealthSyncPlugin extends Plugin {
 		return datesToSync;
 	}
 
+	/** The auto-sync window as date strings: the last 7 full days (yesterday back
+	 *  to 7 days ago). Used by the create-note trigger to match a new file. */
+	private autoSyncWindowDates(): string[] {
+		const dates: string[] = [];
+		for (let i = 1; i <= 7; i++) {
+			const d = new Date();
+			d.setDate(d.getDate() - i);
+			dates.push(this.dateString(d));
+		}
+		return dates;
+	}
+
 	private async runAutoSync(datesToSync: string[]): Promise<void> {
 		if (!this.garminProvider.isSessionValid()) return;
 
@@ -233,8 +294,20 @@ export default class HealthSyncPlugin extends Plugin {
 
 			for (let i = 0; i < datesToSync.length; i++) {
 				const date = datesToSync[i]!;
-				const success = await this.syncManager.syncDate(date, this.settings, true);
-				if (success) {
+				// Wait-for-note applies to the background auto-sync only. Manual sync
+				// and backfill never pass this and always create the note.
+				const outcome = await this.syncManager.syncDate(date, this.settings, true, {
+					waitForNote: !this.settings.createDailyNoteIfMissing,
+				});
+
+				if (outcome === "skipped-missing-note") {
+					// Daily note doesn't exist yet and creation is disabled. No API
+					// call was made, so deliberately set no cooldown (the date re-syncs
+					// the moment the note appears) and skip the rate-limit delay.
+					continue;
+				}
+
+				if (outcome === "synced") {
 					synced++;
 					const isFirstSync = !this.settings.lastSyncTimes[date];
 					if (isFirstSync) {
@@ -245,7 +318,8 @@ export default class HealthSyncPlugin extends Plugin {
 						this.settings.lastSyncTimes[date] = Date.now();
 					}
 				} else {
-					// No data: still set a cooldown so we don't hammer the API on every page switch
+					// "no-data" or transient "error": still set a cooldown so we don't
+					// hammer the API on every page switch.
 					this.settings.lastSyncTimes[date] = Date.now() - (COOLDOWN_MS - NO_DATA_COOLDOWN_MS);
 				}
 
@@ -292,8 +366,8 @@ export default class HealthSyncPlugin extends Plugin {
 
 		const syncDate = this.detectSyncDate();
 		try {
-			const success = await this.syncManager.syncDate(syncDate, this.settings);
-			if (success) {
+			const outcome = await this.syncManager.syncDate(syncDate, this.settings);
+			if (outcome === "synced") {
 				this.settings.lastSyncTimes[syncDate] = Date.now();
 			}
 			this.saveTokens();

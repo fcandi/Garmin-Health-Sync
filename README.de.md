@@ -11,6 +11,7 @@ Synchronisiere Schritte, Schlaf, Herzfrequenz, Stress, Aktivitäten und mehr aut
 ## Funktionen
 
 - **Auto-Sync beim Start** — prüft die letzten 7 Tage und ergänzt fehlende Gesundheitsdaten
+- **Auf-Note-warten-Modus** — der Auto-Sync kann optional warten, bis ein anderes Tool (Templater, Calendar, ein externer Sync) die Daily Note anlegt, statt sie selbst zu erstellen
 - **Manueller Sync** — synchronisiere jede geöffnete Daily Note über die Befehlspalette
 - **Backfill** — Massen-Sync eines Zeitraums (z.B. die letzten 3 Monate)
 - **20+ Metriken** — Schritte, Schlaf-Score, HRV, Stress, Body Battery, SpO2, Gewicht und mehr
@@ -112,7 +113,9 @@ Fehlende Unterordner werden automatisch angelegt.
 
 ### Auto-Sync
 
-Bei jedem Obsidian-Start prüft das Plugin die letzten 7 Tage und ergänzt fehlende Gesundheitsdaten automatisch. Kein manuelles Zutun nötig.
+Bei jedem Obsidian-Start prüft das Plugin die letzten 7 Tage und ergänzt fehlende Gesundheitsdaten automatisch. Kein manuelles Zutun nötig. Standardmäßig legt es eine fehlende Daily Note selbst an.
+
+Wenn ein anderes Tool deine Daily Notes verwaltet (Templater, das Calendar-Plugin, ein externer Sync), deaktiviere **Daily Note bei Bedarf anlegen** in den Einstellungen. Der Auto-Sync wartet dann, bis eine echte (nicht-leere) Daily Note existiert, und synchronisiert, sobald sie auftaucht — leere 0-Byte-Platzhalter werden ignoriert. Manueller Sync und Backfill legen fehlende Notes unabhängig von dieser Einstellung immer an.
 
 ### Manueller Sync
 

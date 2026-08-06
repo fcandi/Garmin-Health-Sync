@@ -11,6 +11,7 @@ Sync steps, sleep, heart rate, stress, activities and more from Garmin Connect i
 ## Features
 
 - **Auto-sync on startup** — checks the last 7 days and fills in any missing health data
+- **Wait-for-note mode** — optionally let auto-sync wait until another tool (Templater, Calendar, an external sync) creates the daily note, instead of creating it itself
 - **Manual sync** — sync any open Daily Note via command palette
 - **Backfill** — bulk-sync a date range (e.g. the last 3 months)
 - **20+ metrics** — steps, sleep score, HRV, stress, body battery, SpO2, weight, and more
@@ -113,7 +114,9 @@ Missing subfolders are created automatically.
 
 ### Auto-sync
 
-On every Obsidian startup, the plugin checks the last 7 days and fills in any missing health data automatically. No action needed.
+On every Obsidian startup, the plugin checks the last 7 days and fills in any missing health data automatically. No action needed. By default it creates a daily note when one is missing.
+
+If another tool owns your daily notes (Templater, the Calendar plugin, an external sync), turn off **Create daily note when missing** in the settings. Auto-sync then waits until a real (non-empty) daily note exists and syncs the moment it appears — empty 0-byte placeholders are ignored. Manual sync and backfill always create missing notes regardless of this setting.
 
 ### Manual sync
 

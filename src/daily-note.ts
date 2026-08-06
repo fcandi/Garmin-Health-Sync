@@ -47,6 +47,54 @@ function findInFolder(folder: TFolder, targetName: string): TFile | null {
 	return null;
 }
 
+/**
+ * Returns true if a *real* daily note for the given date exists in the vault
+ * (searched recursively under the daily-note path). Pure local lookup — no
+ * network. Used to gate syncing before any API call when automatic note
+ * creation is disabled, so a missing note costs zero requests.
+ *
+ * A 0-byte file is deliberately treated as "not yet a real note": clicking a
+ * day in the Calendar plugin creates an empty placeholder, and writing health
+ * data into that stub is exactly what the wait-for-note mode is meant to avoid.
+ * Such a placeholder keeps the date in the waiting state until it has content.
+ */
+export function dailyNoteExists(
+	app: App,
+	date: string,
+	options: { dailyNotePath: string; dailyNoteFormat: string }
+): boolean {
+	const fileName = formatDate(date, options.dailyNoteFormat);
+	const file = findDailyNoteRecursive(app, fileName, options.dailyNotePath);
+	return file !== null && file.stat.size > 0;
+}
+
+/**
+ * Given a freshly observed file, returns which of `candidateDates` it is the
+ * daily note for, or null. Resolves the expected note via the SAME formatDate()
+ * + recursive lookup that dailyNoteExists() uses, so the create-trigger and the
+ * existence gate agree on what counts as a daily note — including formats with
+ * extra moment tokens (ddd, MMM, …) or subfolders, which the basename-regex in
+ * main.ts cannot handle.
+ *
+ * Empty (0-byte) placeholders return null, mirroring dailyNoteExists(): an empty
+ * stub must not trigger a catch-up sync.
+ */
+export function matchDailyNoteDate(
+	app: App,
+	file: TFile,
+	candidateDates: string[],
+	options: { dailyNotePath: string; dailyNoteFormat: string }
+): string | null {
+	if (file.stat.size === 0) return null;
+	for (const date of candidateDates) {
+		const fileName = formatDate(date, options.dailyNoteFormat);
+		if (findDailyNoteRecursive(app, fileName, options.dailyNotePath) === file) {
+			return date;
+		}
+	}
+	return null;
+}
+
 /** Creates a folder including all parent directories */
 async function ensureFolderExists(app: App, folderPath: string): Promise<void> {
 	const normalized = normalizePath(folderPath);
@@ -63,10 +111,12 @@ async function ensureFolderExists(app: App, folderPath: string): Promise<void> {
 
 /**
  * Writes health data as frontmatter properties into a daily note.
- * Creates the daily note if it does not exist.
+ * Creates the daily note if it does not exist and `createIfMissing` is set;
+ * otherwise the write is skipped (returns false) and the note is left alone.
  * Returns true if the file was actually modified, false if all target values
  * already matched the existing frontmatter (dirty check — avoids redundant
- * writes that would trigger sync engines like LiveSync).
+ * writes that would trigger sync engines like LiveSync) or the note was absent
+ * and creation was disabled.
  */
 export async function writeToDailyNote(
 	app: App,
@@ -79,6 +129,7 @@ export async function writeToDailyNote(
 		template: string;
 		writeTrainings: boolean;
 		writeWorkoutLocation: boolean;
+		createIfMissing: boolean;
 	}
 ): Promise<boolean> {
 	const fileName = formatDate(date, options.dailyNoteFormat);
@@ -87,6 +138,13 @@ export async function writeToDailyNote(
 	let file: TFile | null = findDailyNoteRecursive(app, fileName, options.dailyNotePath);
 
 	if (!file) {
+		// Safety net: the caller normally gates on dailyNoteExists() before
+		// fetching, so this only triggers if the note vanished mid-sync. Honour
+		// the setting and skip creation rather than re-creating an unwanted note.
+		if (!options.createIfMissing) {
+			console.debug("Garmin Health Sync: daily note missing and creation disabled, skipping write for", fileName);
+			return false;
+		}
 		// Create new daily note (optionally with subdirectories from the format)
 		const filePath = normalizePath(`${options.dailyNotePath}/${fileName}.md`);
 		const fileDir = filePath.substring(0, filePath.lastIndexOf("/"));

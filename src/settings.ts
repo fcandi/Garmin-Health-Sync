@@ -38,6 +38,7 @@ export interface HealthSyncSettings {
 	garminOAuth2: string; // JSON-serialized OAuth2Token (short-lived)
 	language: string;
 	autoSync: boolean;
+	createDailyNoteIfMissing: boolean; // When false, sync waits for the note instead of creating it
 	writeTrainings: boolean; // Machine-readable training data in frontmatter
 	writeWorkoutLocation: boolean; // Reverse-geocoded workout location in frontmatter
 	serverRegion: ServerRegion;
@@ -56,6 +57,7 @@ export const DEFAULT_SETTINGS: HealthSyncSettings = {
 	garminOAuth2: "",
 	language: "en",
 	autoSync: true,
+	createDailyNoteIfMissing: true,
 	writeTrainings: false,
 	writeWorkoutLocation: true,
 	serverRegion: "international",
@@ -131,6 +133,15 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 				name: t("settingsAutoSync", lang),
 				desc: t("settingsAutoSyncDesc", lang),
 				control: { type: "toggle", key: "autoSync" },
+			},
+			// Auto-sync behaviour only: when off, the background auto-sync waits
+			// for a real note instead of creating it; manual sync and backfill
+			// still create. Avoids conflicts with the tool that owns the note
+			// (Templater, Calendar, an external sync, ...).
+			{
+				name: t("settingsCreateDailyNote", lang),
+				desc: t("settingsCreateDailyNoteDesc", lang),
+				control: { type: "toggle", key: "createDailyNoteIfMissing" },
 			},
 			{
 				name: t("settingsDailyNotePath", lang),
