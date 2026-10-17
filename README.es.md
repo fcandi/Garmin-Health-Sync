@@ -4,9 +4,7 @@
 
 Sincroniza automáticamente pasos, sueño, frecuencia cardíaca, estrés, actividades y más desde Garmin Connect a Obsidian Daily Notes — como propiedades de frontmatter que puedes consultar con Dataview.
 
-> **Solo escritorio.** Este plugin utiliza BrowserWindow de Electron para la autenticación de Garmin Connect y no funciona en dispositivos móviles.
-
-> **Nota:** Este plugin utiliza la API web interna de Garmin Connect mediante una sesión de navegador Electron; no existe una API oficial de terceros.
+> **Funciona en escritorio y en móvil** (Windows, macOS, Linux, iOS, Android). Este plugin utiliza la API interna de Garmin Connect; no existe una API oficial de terceros. Inicias sesión con tu correo y contraseña de Garmin (y el código de verificación si usas la verificación en dos pasos). Si Garmin bloquea ese intento, hay un inicio de sesión alternativo en el navegador.
 
 ## Características
 
@@ -77,7 +75,7 @@ trainings:
 
 ## Requisitos
 
-- **Obsidian Desktop** (Windows, macOS, Linux) — el plugin no funciona en móvil
+- **Obsidian** en Windows, macOS, Linux, iOS o Android
 - **Cuenta de Garmin** con acceso a Garmin Connect
 - Plugin **Daily Notes** o **Periodic Notes** activado (o configurar la ruta manualmente en los ajustes)
 
@@ -98,6 +96,12 @@ trainings:
 4. Activa el plugin en Configuración → Community Plugins
 
 ## Uso
+
+### Iniciar sesión
+
+Abre los ajustes del plugin y elige **Garmin Connect**; después introduce tu correo y contraseña de Garmin (y el código de verificación si usas la verificación en dos pasos). El inicio de sesión funciona igual en escritorio y en móvil.
+
+Garmin puede limitar los intentos repetidos desde un dispositivo; el plugin muestra entonces una cuenta atrás hasta el siguiente intento. Si el inicio de sesión está bloqueado, usa en su lugar **Usar inicio de sesión en el navegador**: inicias sesión en la página de Garmin en tu navegador, copias el texto de la página que contiene `ST-…` y pulsas el botón del portapapeles en el plugin (o lo pegas en el campo). Una vez iniciada la sesión, el plugin renueva la conexión por sí mismo, así que rara vez tendrás que volver a iniciar sesión.
 
 ### Dónde se guardan las notas
 
@@ -168,7 +172,7 @@ A cada actividad se le asigna una categoría:
 
 Este plugin realiza solicitudes de red a dos servicios externos:
 
-- **Garmin Connect** — una ventana del navegador se autentica con Garmin Connect usando tus credenciales. El plugin no almacena tu contraseña. Los datos locales del plugin pueden almacenar datos de sesión de Garmin, incluidas cookies de sesión, para que el plugin pueda restaurar la sesión del navegador sin pedirte que inicies sesión de nuevo. Trata estos datos de sesión como un token de inicio de sesión: su duración la controla Garmin, y pueden incluirse en copias de seguridad o herramientas de sincronización si estas incluyen datos de plugins de Obsidian. **Cerrar sesión** elimina los datos de sesión de Garmin guardados en este dispositivo.
+- **Garmin Connect** — introduces tu correo y contraseña (y un código de verificación si es necesario) en el plugin. Se envían únicamente a los servidores de inicio de sesión de Garmin (`sso.garmin.com`, o `sso.garmin.cn` para China) y el plugin nunca los guarda ni los registra. Tras iniciar sesión, el plugin guarda los tokens de Garmin en el almacén de secretos de Obsidian, que permanece en el dispositivo, por lo que no se sincronizan con otros dispositivos ni se incluyen en copias de seguridad del vault ni en Git. Solo si el almacén de secretos no está disponible o rechaza la escritura, el plugin los guarda en `data.json`. Trata estos tokens como un inicio de sesión: Garmin controla su duración. Cada dispositivo inicia sesión por separado. Si Garmin bloquea o limita el inicio de sesión, se ofrece un inicio de sesión en el navegador (inicias sesión en la página de Garmin en tu navegador y pegas el ticket de un solo uso). Las claves OAuth públicas necesarias para iniciar sesión se obtienen de `thegarth.s3.amazonaws.com` (con claves de respaldo incluidas si ese host no está disponible). **Cerrar sesión** borra los tokens guardados en este dispositivo.
 - **Nominatim (OpenStreetMap)** — si la función **Ubicación del entrenamiento** está activada, las coordenadas GPS de tu primera actividad se envían a `nominatim.openstreetmap.org` para geocodificación inversa. Puedes desactivarlo en los ajustes, en **Ubicación del entrenamiento**.
 
 No se envían datos a ningún otro servidor.

@@ -126,7 +126,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 			},
 			{
 				name: t("settingsGarminLogin", lang),
-				desc: `${garminStatus}. ${t("settingsGarminSessionPrivacyDesc", lang)}`,
+				desc: `${garminStatus}. ${t("settingsGarminSessionPrivacyDesc", lang)}${hasSavedSession ? ` ${t("settingsGarminLogoutHint", lang)}` : ""}`,
 				render: (setting) => this.renderGarminLogin(setting, hasSavedSession),
 			},
 			{
@@ -244,6 +244,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 	private renderGarminLogin(setting: Setting, hasSavedSession: boolean): () => void {
 		const lang = this.plugin.settings.language;
 		const buttonEls: HTMLButtonElement[] = [];
+		setting.settingEl.addClass("ghs-login-row");
 
 		if (hasSavedSession) {
 			setting.addButton((btn) => {
@@ -259,7 +260,7 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 				btn.setButtonText(t("settingsGarminLogin", lang))
 					.setCta()
 					.onClick(async () => {
-						await this.plugin.loginViaBrowser();
+						await this.plugin.loginViaBrowser(() => this.update());
 						this.update();
 					});
 			});
@@ -275,6 +276,9 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 			});
 		}
 
-		return () => buttonEls.forEach((el) => el.remove());
+		return () => {
+			buttonEls.forEach((el) => el.remove());
+			setting.settingEl.removeClass("ghs-login-row");
+		};
 	}
 }

@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Notice, Platform, Setting } from "obsidian";
 import { t } from "../i18n/t";
 
 /** Manual-ticket login fallback (issue #6): some Garmin SSO widget variants
@@ -25,15 +25,31 @@ export class ManualLoginModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
+		contentEl.addClass("ghs-modal");
 		contentEl.createEl("h2", { text: t("modalManualLoginTitle", this.lang) });
+
+		// Echo of what the field holds, kept at the top: on phones the keyboard covers the
+		// lower part of the modal, including the field itself. Only the start of the ticket
+		// is shown.
+		const preview = contentEl.createDiv({ cls: "ghs-ticket-preview" });
+		const showPreview = (value: string): void => {
+			const m = value.match(/ST-[0-9A-Za-z._-]+/);
+			preview.setText(m
+				? t("modalManualLoginTicketFound", this.lang).replace("{ticket}", `${m[0].slice(0, 14)}…`)
+				: t("modalManualLoginTicketNone", this.lang));
+			preview.toggleClass("is-found", m !== null);
+		};
+		showPreview("");
+
 		contentEl.createEl("p", { text: t("modalManualLoginIntro", this.lang) });
 
 		const steps = contentEl.createEl("ol");
 		steps.createEl("li", { text: t("modalManualLoginStep1", this.lang) });
 		steps.createEl("li", { text: t("modalManualLoginStep2", this.lang) });
-		steps.createEl("li", { text: t("modalManualLoginStep3", this.lang) });
+		steps.createEl("li", { text: t(Platform.isDesktopApp ? "modalManualLoginStep3" : "modalManualLoginStep3Mobile", this.lang) });
 
 		new Setting(contentEl)
+			.setClass("ghs-action-row")
 			.setName(t("modalManualLoginOpenUrl", this.lang))
 			.addButton(btn => btn
 				.setButtonText(t("modalManualLoginOpenButton", this.lang))
@@ -54,9 +70,18 @@ export class ManualLoginModal extends Modal {
 		new Setting(contentEl)
 			.setName(t("modalManualLoginTicket", this.lang))
 			.setDesc(t("modalManualLoginTicketDesc", this.lang))
-			.addText(text => text
-				.setPlaceholder(t("modalManualLoginTicketPlaceholder", this.lang))
-				.onChange(value => { input = value; }));
+			.addText(text => {
+				// A ticket must reach Garmin unchanged: no autocorrect or auto-capitalisation.
+				text.inputEl.setAttr("autocapitalize", "off");
+				text.inputEl.setAttr("autocorrect", "off");
+				text.inputEl.spellcheck = false;
+				text.inputEl.enterKeyHint = "go";
+				text.setPlaceholder(t("modalManualLoginTicketPlaceholder", this.lang))
+					.onChange(value => { input = value; showPreview(value); });
+				text.inputEl.addEventListener("keydown", (ev: KeyboardEvent) => {
+					if (ev.key === "Enter") { ev.preventDefault(); void submit(input); }
+				});
+			});
 
 		let busy = false;
 		const submit = async (value: string): Promise<void> => {
@@ -71,6 +96,7 @@ export class ManualLoginModal extends Modal {
 		};
 
 		new Setting(contentEl)
+			.setClass("ghs-action-row")
 			// Primary one-click path (issue #6): read the ST-… ticket straight from the
 			// clipboard after the user copied the result-page address in their browser, so
 			// they never have to paste into the field. An explicit button (no background
@@ -80,7 +106,14 @@ export class ManualLoginModal extends Modal {
 				.setCta()
 				.onClick(async () => {
 					let clip = "";
-					try { clip = await navigator.clipboard.readText(); } catch { /* clipboard unavailable */ }
+					try {
+						clip = await navigator.clipboard.readText();
+					} catch {
+						// Some mobile WebViews block clipboard reads: point to the field instead.
+						new Notice(t("modalManualLoginClipboardBlocked", this.lang));
+						return;
+					}
+					showPreview(clip);
 					if (!/ST-[0-9A-Za-z._-]+/.test(clip)) {
 						new Notice(t("modalManualLoginPasteEmpty", this.lang));
 						return;

@@ -4,9 +4,7 @@
 
 Synchronisiere Schritte, Schlaf, Herzfrequenz, Stress, Aktivitäten und mehr automatisch von Garmin Connect in Obsidian Daily Notes — als Frontmatter-Properties, die du mit Dataview abfragen kannst.
 
-> **Nur Desktop.** Dieses Plugin nutzt Electrons BrowserWindow zur Garmin-Connect-Authentifizierung und funktioniert nicht auf Mobilgeräten.
-
-> **Hinweis:** Dieses Plugin nutzt Garmins interne Web-API über eine Electron-Browser-Session — es gibt keine offizielle Drittanbieter-API.
+> **Funktioniert auf Desktop und Mobilgeräten** (Windows, macOS, Linux, iOS, Android). Dieses Plugin nutzt Garmins interne API — es gibt keine offizielle Drittanbieter-API. Du meldest dich mit deiner Garmin-E-Mail und deinem Passwort an (bei Bestätigung in zwei Schritten zusätzlich mit dem Bestätigungscode). Blockiert Garmin diesen Versuch, steht eine alternative Browser-Anmeldung zur Verfügung.
 
 ## Funktionen
 
@@ -78,7 +76,7 @@ trainings:
 
 ## Voraussetzungen
 
-- **Obsidian Desktop** (Windows, macOS, Linux) — das Plugin funktioniert nicht auf Mobilgeräten
+- **Obsidian** unter Windows, macOS, Linux, iOS oder Android
 - **Garmin-Konto** mit Zugriff auf Garmin Connect
 - **Daily Notes** oder **Periodic Notes** aktiviert (oder den Pfad manuell in den Einstellungen konfigurieren)
 
@@ -99,6 +97,12 @@ trainings:
 4. Aktiviere das Plugin unter Einstellungen → Community Plugins
 
 ## Verwendung
+
+### Anmelden
+
+Öffne die Plugin-Einstellungen und wähle **Garmin Connect**, dann gib deine Garmin-E-Mail und dein Passwort ein (und den Bestätigungscode, falls du die Bestätigung in zwei Schritten nutzt). Die Anmeldung funktioniert am Desktop und auf Mobilgeräten gleich.
+
+Garmin kann wiederholte Anmeldeversuche von einem Gerät begrenzen; das Plugin zeigt dann einen Countdown bis zum nächsten Versuch. Ist die Anmeldung blockiert, nutze stattdessen **Browser-Anmeldung verwenden**: Du meldest dich auf Garmins Seite im Browser an, kopierst den Seitentext mit `ST-…` und tippst im Plugin auf die Schaltfläche für die Zwischenablage (oder fügst ihn ins Feld ein). Nach der Anmeldung erneuert das Plugin die Verbindung selbstständig, du musst dich nur selten erneut anmelden.
 
 ### Wo die Notizen liegen
 
@@ -169,7 +173,7 @@ Jeder Aktivität wird eine Kategorie zugewiesen:
 
 Dieses Plugin stellt Netzwerkverbindungen zu zwei externen Diensten her:
 
-- **Garmin Connect** — ein Browserfenster authentifiziert dich mit deinen Garmin-Zugangsdaten. Das Plugin speichert kein Passwort. Lokale Plugin-Daten können Garmin-Session-Daten inklusive Session-Cookies speichern, damit das Plugin die Browser-Session wiederherstellen kann, ohne erneut nach einem Login zu fragen. Behandle diese Session-Daten wie einen Login-Token: Die Laufzeit wird von Garmin kontrolliert, und sie können in Backups oder Sync-Tools enthalten sein, wenn diese Obsidian-Plugin-Daten einschließen. **Abmelden** löscht die gespeicherten Garmin-Session-Daten auf diesem Gerät.
+- **Garmin Connect** — du gibst E-Mail und Passwort (und ggf. einen Bestätigungscode) im Plugin ein. Sie werden nur an Garmins Anmeldeserver gesendet (`sso.garmin.com`, bzw. `sso.garmin.cn` für China) und vom Plugin weder gespeichert noch protokolliert. Nach der Anmeldung speichert das Plugin Garmin-Anmeldetokens im Secret Storage von Obsidian. Dieser bleibt auf dem Gerät, sodass die Tokens nicht mit anderen Geräten synchronisiert und nicht in Vault-Backups oder Git aufgenommen werden. Nur wenn der Secret Storage nicht verfügbar ist oder das Schreiben ablehnt, legt das Plugin sie in `data.json` ab. Behandle diese Tokens wie ein Login: Ihre Lebensdauer bestimmt Garmin. Jedes Gerät meldet sich separat an. Blockiert oder begrenzt Garmin die Anmeldung, wird eine Browser-Anmeldung angeboten (du meldest dich auf Garmins Seite im Browser an und fügst das einmalige Ticket ein). Die öffentlichen OAuth-Client-Schlüssel werden von `thegarth.s3.amazonaws.com` geladen (mit mitgelieferten Ersatzschlüsseln, falls der Host nicht erreichbar ist). **Abmelden** löscht die gespeicherten Tokens auf diesem Gerät.
 - **Nominatim (OpenStreetMap)** — wenn **Workout-Ort** aktiviert ist, werden die GPS-Koordinaten deiner ersten Aktivität zur Rückwärts-Geokodierung an `nominatim.openstreetmap.org` gesendet. Du kannst dies in den Einstellungen unter **Workout-Ort** deaktivieren.
 
 Es werden keine Daten an andere Server gesendet.

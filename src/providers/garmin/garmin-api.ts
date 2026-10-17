@@ -3,6 +3,14 @@ import type { ServerRegion } from "../../settings";
 import { LoginRequiredError, GarminAuthError, isGarminAuthError, isAuthFailureStatus } from "../../errors";
 import { getConsumer, getOAuth1, exchange, OAUTH_UA, type OAuth1Token, type OAuth2Token, type Consumer } from "./garmin-oauth";
 import { AuthStateMachine, type AuthState } from "./auth-state";
+import {
+	mobileLogin,
+	mobileVerifyMfa,
+	getMobileServiceUrl,
+	type MfaChallenge,
+	type MobileSsoFailure,
+	type MobileSsoResult,
+} from "./garmin-mobile-sso";
 
 interface RegionUrls {
 	connectBase: string;
@@ -147,6 +155,11 @@ function getLoginUserAgent(): string {
 	return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ${chrome} Safari/537.36`;
 }
 
+export type CredentialLoginOutcome =
+	| { status: "ok" }
+	| { status: "mfa"; method: string }
+	| { status: "error"; reason: MobileSsoFailure | "exchange_failed"; detail: string; retryAfter?: number };
+
 export class GarminApi {
 	// OAuth tokens (M1/M2): long-lived OAuth1 + short-lived OAuth2. Persisted via main.ts.
 	private oauth1: OAuth1Token | null = null;
@@ -162,6 +175,9 @@ export class GarminApi {
 	private activeLoginWindow: BrowserWindowType | null = null;
 	// Plugin version for self-identifying login/diagnostic logs (set from main.ts).
 	private pluginVersion = "";
+	// Credential login (mobile): pending MFA challenge + redacted step log for bug reports.
+	private pendingMfa: MfaChallenge | null = null;
+	private loginDiagnostics: string[] = [];
 
 	setRegion(region: ServerRegion): void {
 		this.urls = getRegionUrls(region);
@@ -270,6 +286,8 @@ export class GarminApi {
 	}
 
 	private async doLoginViaOAuth(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; detail: string; cancelled?: boolean }> {
+		// The Electron BrowserWindow only exists on desktop; mobile uses loginWithCredentials().
+		if (!Platform.isDesktopApp) return { ok: false, detail: "unsupported_platform" };
 		const silent = opts.silent ?? false;
 		console.debug(`Garmin Health Sync: starting OAuth login (plugin v${this.pluginVersion || "?"}, region=${this.urls.domain}, silent=${silent})`);
 		const BrowserWindow = this.getBrowserWindowConstructor();
@@ -595,17 +613,96 @@ export class GarminApi {
 
 	/** Ticket → OAuth1 → OAuth2 (proves M1 + M2 end-to-end against real Garmin servers).
 	 *  login-url = …/sso/embed, matching the `service` of the ticket. */
-	private async exchangeTicket(ticket: string, via: string): Promise<{ ok: boolean; detail: string }> {
+	private async exchangeTicket(
+		ticket: string,
+		via: string,
+		loginUrl: string = this.urls.ssoEmbed,
+	): Promise<{ ok: boolean; detail: string }> {
 		const consumer = await this.getConsumerCached();
-		const oauth1 = await getOAuth1(ticket, consumer, this.urls.domain, this.urls.ssoEmbed);
-		this.oauth1 = oauth1;
+		const oauth1 = await getOAuth1(ticket, consumer, this.urls.domain, loginUrl);
 		console.debug("Garmin Health Sync: OAuth1 token obtained (oauth_token:", oauth1.oauth_token.slice(0, 10) + "…)");
 		const oauth2 = await exchange(oauth1, consumer, this.urls.domain, { login: true });
+		// Only replace the working session once BOTH exchanges succeeded, so a failed
+		// re-login cannot leave a half-set (OAuth1 without OAuth2) state behind.
+		this.oauth1 = oauth1;
 		this.oauth2 = oauth2;
 		this.displayName = "";          // resolve fresh on (re-)login
 		this.authState.onLogin();        // fresh login → ready, reset backoff
 		console.debug("Garmin Health Sync: OAuth2 token obtained, expires_in:", oauth2.expires_in, "s");
 		return { ok: true, detail: `via=${via}; oauth1 ok; oauth2 ok; expires_in=${oauth2.expires_in}s` };
+	}
+
+	/** Redacted, copy-pasteable log of the last credential login (no password, ticket or token). */
+	getLoginDiagnostics(): string {
+		return this.loginDiagnostics.join("\n");
+	}
+
+	private diag(line: string): void {
+		this.loginDiagnostics.push(line);
+		console.debug(`Garmin Health Sync: login — ${line}`);
+	}
+
+	/** Credential login without a browser (works on mobile). Password is used for this call
+	 *  only. Result `mfa` means a verification code is needed: call completeMfaLogin(). */
+	async loginWithCredentials(email: string, password: string): Promise<CredentialLoginOutcome> {
+		this.pendingMfa = null;
+		const platform = Platform.isIosApp ? "ios" : Platform.isAndroidApp ? "android" : Platform.isDesktopApp ? "desktop" : "other";
+		this.loginDiagnostics = [`plugin v${this.pluginVersion || "?"}, platform=${platform}, region=${this.urls.domain}`];
+		try {
+			return await this.handleSsoResult(await mobileLogin(this.urls.domain, email.trim(), password));
+		} catch (e: unknown) {
+			return this.crashOutcome(e);
+		}
+	}
+
+	/** An exception escaped the sign-in code: keep its type/message (never the password) in the diagnostics. */
+	private crashOutcome(e: unknown): CredentialLoginOutcome {
+		const name = e instanceof Error ? e.name : "error";
+		const msg = e instanceof Error ? e.message : String(e);
+		this.diag(`unexpected error: ${name}: ${msg}`);
+		console.error("Garmin Health Sync: credential login crashed", e);
+		return { status: "error", reason: "unexpected", detail: this.getLoginDiagnostics() };
+	}
+
+	/** Second step after loginWithCredentials() returned `mfa`. */
+	async completeMfaLogin(code: string): Promise<CredentialLoginOutcome> {
+		if (!this.pendingMfa) return { status: "error", reason: "unexpected", detail: "no_pending_mfa" };
+		try {
+			return await this.handleSsoResult(await mobileVerifyMfa(this.urls.domain, this.pendingMfa, code));
+		} catch (e: unknown) {
+			return this.crashOutcome(e);
+		}
+	}
+
+	private async handleSsoResult(result: MobileSsoResult): Promise<CredentialLoginOutcome> {
+		if (result.kind === "mfa") {
+			this.pendingMfa = result.challenge;
+			this.diag(`sso: MFA required (${result.challenge.method}), session cookies=${Object.keys(result.challenge.cookies).length}`);
+			return { status: "mfa", method: result.challenge.method };
+		}
+		if (result.kind === "error") {
+			this.diag(`sso: ${result.detail}`);
+			return {
+				status: "error",
+				reason: result.reason,
+				detail: this.getLoginDiagnostics(),
+				...(result.retryAfter !== undefined ? { retryAfter: result.retryAfter } : {}),
+			};
+		}
+		this.pendingMfa = null;
+		this.diag("sso: ticket received");
+		try {
+			// login-url must match the `service` the ticket was issued for.
+			await this.exchangeTicket(result.ticket, "credentials", getMobileServiceUrl(this.urls.domain));
+			this.diag("oauth1 + oauth2 exchange ok");
+			return { status: "ok" };
+		} catch (e: unknown) {
+			const status = isGarminAuthError(e) ? e.status : undefined;
+			const msg = e instanceof Error ? e.message : String(e);
+			this.diag(`token exchange failed${status != null ? ` (HTTP ${status})` : ""}: ${msg}`);
+			// 429 from the token endpoints is the same rate limit: give it the cooldown + message.
+			return { status: "error", reason: status === 429 ? "rate_limited" : "exchange_failed", detail: this.getLoginDiagnostics() };
+		}
 	}
 
 	/** Manual-ticket login fallback (issue #6): some Garmin SSO widget variants

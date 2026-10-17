@@ -1,6 +1,6 @@
 import type { HealthData, HealthProvider, LoginResult } from "../provider";
 import type { ServerRegion } from "../../settings";
-import { GarminApi, getRequiredEndpoints, calculateBatchDelay } from "./garmin-api";
+import { GarminApi, getRequiredEndpoints, calculateBatchDelay, type CredentialLoginOutcome } from "./garmin-api";
 import type { OAuth1Token, OAuth2Token } from "./garmin-oauth";
 import type { AuthState } from "./auth-state";
 import { LoginRequiredError, isLoginRequiredError } from "../../errors";
@@ -55,6 +55,20 @@ export class GarminProvider implements HealthProvider {
 		const res = await this.api.loginViaOAuth();
 		if (!res.ok) console.debug("Garmin Health Sync: OAuth login failed —", res.detail);
 		return { ok: res.ok, cancelled: res.cancelled === true };
+	}
+
+	/** Browser-free credential login (mobile). The password is not retained. */
+	loginWithCredentials(email: string, password: string): Promise<CredentialLoginOutcome> {
+		return this.api.loginWithCredentials(email, password);
+	}
+
+	completeMfaLogin(code: string): Promise<CredentialLoginOutcome> {
+		return this.api.completeMfaLogin(code);
+	}
+
+	/** Redacted step log of the last credential login, for bug reports. */
+	getLoginDiagnostics(): string {
+		return this.api.getLoginDiagnostics();
 	}
 
 	/** Sign-in URL for the manual-ticket fallback (opened in an external browser). */

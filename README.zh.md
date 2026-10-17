@@ -4,9 +4,7 @@
 
 自动将步数、睡眠、心率、压力、运动等健康数据从 Garmin Connect 同步到 Obsidian Daily Notes —— 作为 frontmatter 属性，可通过 Dataview 查询。
 
-> **仅限桌面端。** 本插件使用 Electron 的 BrowserWindow 进行 Garmin Connect 身份验证，不支持移动设备。
-
-> **注意：** 本插件通过 Electron 浏览器会话使用 Garmin Connect 的内部 Web API；Garmin 没有提供官方第三方 API。
+> **支持桌面端和移动端**（Windows、macOS、Linux、iOS、Android）。本插件使用 Garmin Connect 的内部 API；Garmin 没有提供官方第三方 API。你使用 Garmin 邮箱和密码登录（如启用两步验证，还需输入验证码）。如果 Garmin 阻止此次尝试，可使用备用的浏览器登录方式。
 
 ## 功能特性
 
@@ -77,7 +75,7 @@ trainings:
 
 ## 要求
 
-- **Obsidian Desktop**（Windows、macOS、Linux）——本插件不支持移动端
+- **Obsidian**（Windows、macOS、Linux、iOS 或 Android）
 - 可访问 Garmin Connect 的 **Garmin 账号**
 - 已启用 **Daily Notes** 或 **Periodic Notes** 插件（或在设置中手动配置路径）
 
@@ -98,6 +96,12 @@ trainings:
 4. 在设置 → Community Plugins 中启用插件
 
 ## 使用方法
+
+### 登录
+
+打开插件设置并选择 **Garmin Connect**，然后输入你的 Garmin 邮箱和密码（如启用两步验证，还需输入验证码）。桌面端和移动端的登录方式相同。
+
+Garmin 可能会限制同一设备的重复登录尝试，此时插件会显示倒计时，等待结束后才能再次尝试。如果登录被阻止，请改用**使用浏览器登录**：在浏览器中打开 Garmin 的页面登录，复制包含 `ST-…` 的页面文字，然后点击插件中的剪贴板按钮（也可以粘贴到输入框）。登录成功后，插件会自动续期连接，因此你很少需要重新登录。
 
 ### 笔记的存放位置
 
@@ -168,7 +172,7 @@ Garmin 的 `typeKey` 值会被标准化为更简洁的规范键名：
 
 本插件会向两个外部服务发起网络请求：
 
-- **Garmin Connect** — 浏览器窗口会使用你的凭据登录 Garmin Connect。插件不会保存你的密码。本地插件数据可能会保存 Garmin 会话数据，包括会话 Cookie，以便插件无需再次要求登录即可恢复浏览器会话。请像对待登录令牌一样对待这些会话数据：其有效期由 Garmin 控制；如果备份或同步工具包含 Obsidian 插件数据，这些数据也可能被包含在其中。**退出登录**会清除此设备上保存的 Garmin 会话数据。
+- **Garmin Connect** —— 你在插件中输入邮箱和密码（如需要还有验证码）。它们只会发送到 Garmin 的登录服务器（`sso.garmin.com`，中国区为 `sso.garmin.cn`），插件不会保存或记录它们。登录后，插件会把 Garmin 登录令牌保存在 Obsidian 的密钥存储中，该存储只保留在本设备上，因此令牌不会同步到其他设备，也不会进入库备份或 Git。只有在密钥存储不可用或拒绝写入时，插件才会退而将其保存在 `data.json` 中。请像对待登录凭据一样对待这些令牌：其有效期由 Garmin 控制。每台设备需要单独登录。如果 Garmin 阻止或限制登录，会提供浏览器登录方式（在浏览器中打开 Garmin 的页面登录并粘贴一次性票据）。登录所需的公开 OAuth 客户端密钥从 `thegarth.s3.amazonaws.com` 获取（如果该主机无法访问，则使用内置的备用密钥）。**退出登录**会清除本设备上保存的令牌。
 - **Nominatim (OpenStreetMap)** — 如果启用了 **训练地点** 功能，你第一项活动的 GPS 坐标会发送到 `nominatim.openstreetmap.org` 进行反向地理编码。你可以在设置中的 **训练地点** 关闭此功能。
 
 不会向其他服务器发送数据。

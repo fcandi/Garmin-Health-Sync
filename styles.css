@@ -1,8 +1,51 @@
-/*
+/* Login modals and settings row: keep buttons inside the screen on phones (mobile only). */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.is-mobile .ghs-modal .ghs-action-row {
+	flex-wrap: wrap;
+}
 
-If your plugin does not need CSS, delete this file.
+.is-mobile .ghs-modal .ghs-action-row .setting-item-info {
+	flex: 1 1 100%;
+}
 
-*/
+.is-mobile .ghs-modal .ghs-action-row .setting-item-control {
+	flex: 1 1 100%;
+	flex-wrap: wrap;
+	justify-content: stretch;
+}
+
+.is-mobile .ghs-modal .ghs-action-row .setting-item-control > button {
+	flex: 1 1 100%;
+	max-width: 100%;
+}
+
+.is-mobile .ghs-login-row .setting-item-control {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	max-width: 100%;
+}
+
+.is-mobile .ghs-login-row .setting-item-control > button {
+	max-width: 100%;
+}
+
+/* Echo of the ticket field, shown above the on-screen keyboard. */
+.ghs-ticket-preview {
+	padding: 6px 10px;
+	margin-bottom: 8px;
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-family: var(--font-monospace);
+	overflow-wrap: anywhere;
+}
+
+.ghs-ticket-preview.is-found {
+	color: var(--text-success);
+}
+
+.ghs-diagnostics {
+	width: 100%;
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+}

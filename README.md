@@ -4,9 +4,7 @@
 
 Sync steps, sleep, heart rate, stress, activities and more from Garmin Connect into Obsidian Daily Notes — as frontmatter properties you can query with Dataview.
 
-> **Desktop only.** This plugin uses Electron's BrowserWindow for Garmin Connect authentication and does not work on mobile.
-
-> **Note:** This plugin uses Garmin Connect's internal web API through an Electron browser session — there is no official third-party API available.
+> **Works on desktop and mobile** (Windows, macOS, Linux, iOS, Android). This plugin uses Garmin Connect's internal API — there is no official third-party API available. You sign in with your Garmin email and password (plus the verification code if you use two-step verification). If Garmin blocks that attempt, an alternative browser sign-in is available.
 
 ## Features
 
@@ -79,7 +77,7 @@ trainings:
 
 ## Requirements
 
-- **Obsidian Desktop** (Windows, macOS, Linux) — the plugin does not work on mobile
+- **Obsidian** on Windows, macOS, Linux, iOS or Android
 - **Garmin account** with access to Garmin Connect
 - **Daily Notes** or **Periodic Notes** plugin enabled (or configure the path manually in settings)
 
@@ -100,6 +98,12 @@ trainings:
 4. Enable the plugin in Settings → Community Plugins
 
 ## Usage
+
+### Signing in
+
+Open the plugin settings and select **Garmin Connect**, then enter your Garmin email and password (and the verification code if you use two-step verification). The same sign-in works on desktop and mobile.
+
+Garmin may limit repeated sign-in attempts from one device; the plugin then shows a countdown before you can try again. If sign-in is blocked, use **Use browser login** instead: you sign in on Garmin's page in your browser, copy the page text that contains `ST-…` and tap the clipboard button in the plugin (or paste it into the field). Once signed in, the plugin renews the connection by itself, so you rarely need to sign in again.
 
 ### Where notes are stored
 
@@ -170,7 +174,7 @@ Each activity is assigned a category:
 
 This plugin makes network requests to two external services:
 
-- **Garmin Connect** — a browser window authenticates with Garmin Connect using your credentials. No password is stored by the plugin. Local plugin data may store Garmin session data, including session cookies, so the plugin can restore the browser session without asking you to log in again. Treat this session data like a login token: its lifetime is controlled by Garmin, and it may be included in backups or sync tools if they include Obsidian plugin data. Using **Logout** clears the stored Garmin session data on this device.
+- **Garmin Connect** — you enter your email and password (and a verification code if required) in the plugin. They are sent only to Garmin's sign-in servers (`sso.garmin.com`, or `sso.garmin.cn` for China) and are never stored or logged by the plugin. After sign-in the plugin keeps Garmin sign-in tokens in Obsidian's secret storage, which stays on the device, so they are not synced to other devices or included in vault backups and Git. Only if secret storage is unavailable or rejects the write does the plugin fall back to keeping them in `data.json`. Treat these tokens like a login: their lifetime is controlled by Garmin. Each device signs in separately. If Garmin blocks or rate-limits the sign-in, a browser sign-in is offered (you sign in on Garmin's own page in your browser and paste the one-time ticket back). The public OAuth client keys needed for sign-in are fetched from `thegarth.s3.amazonaws.com` (with bundled fallback keys if that host is unreachable). Using **Logout** clears the stored tokens on this device.
 - **Nominatim (OpenStreetMap)** — if the "Workout location" feature is enabled, the GPS coordinates of your first activity are sent to `nominatim.openstreetmap.org` for reverse geocoding. You can disable this in settings under *Workout location*.
 
 No data is sent to any other server.

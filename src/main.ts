@@ -1,11 +1,14 @@
 import { App, Modal, Notice, Plugin, Setting, TAbstractFile, TFile } from "obsidian";
 import { DEFAULT_SETTINGS, HealthSyncSettings, HealthSyncSettingTab } from "./settings";
 import { ManualLoginModal } from "./ui/manual-login-modal";
+import { CredentialLoginModal } from "./ui/credential-login-modal";
+import { LoginCooldown } from "./login-cooldown";
 import { SyncManager } from "./sync";
 import { matchDailyNoteDate } from "./daily-note";
 import { GarminProvider } from "./providers/garmin/garmin-provider";
 import type { OAuth1Token, OAuth2Token } from "./providers/garmin/garmin-oauth";
 import { t } from "./i18n/t";
+import { readStoredTokens, writeStoredTokens } from "./token-store";
 import { isLoginRequiredError } from "./errors";
 
 const AUTO_SYNC_TRIGGER_DEBOUNCE_MS = 30 * 1000;
@@ -76,6 +79,7 @@ export default class HealthSyncPlugin extends Plugin {
 	private lastAutoSyncAttempt = 0;
 	private loginRequiredNotice: Notice | null = null;
 	private lastLoginNoticeAt = 0;
+	private credentialModalOpen = false;
 
 	async onload() {
 		await this.loadSettings();
@@ -86,7 +90,7 @@ export default class HealthSyncPlugin extends Plugin {
 		this.applyServerRegion();
 
 		// Restore persisted OAuth tokens; migrate legacy cookie users (M6)
-		this.restoreTokens();
+		await this.restoreTokens();
 		await this.migrateLegacySession();
 
 		this.syncManager = new SyncManager(this.app, this.garminProvider);
@@ -408,30 +412,35 @@ export default class HealthSyncPlugin extends Plugin {
 	}
 
 	/** Interactive OAuth login from settings (opens the Garmin login window). */
-	async loginViaBrowser(): Promise<void> {
-		try {
-			const result = await this.garminProvider.authenticate();
-			if (result.ok) {
+	loginViaBrowser(onSuccess?: () => void): Promise<void> {
+		// Primary sign-in on every platform: email + password (+ MFA code) without a browser.
+		this.openCredentialLogin(onSuccess);
+		return Promise.resolve();
+	}
+
+	/** Browser-free sign-in (email + password, optional MFA code). Used on mobile. */
+	openCredentialLogin(onSuccess?: () => void): void {
+		if (this.credentialModalOpen) return;
+		this.credentialModalOpen = true;
+		const cooldown = new LoginCooldown(this.app);
+		let previousAttemptAgo: number | null = null;
+		new CredentialLoginModal(this.app, this.settings.language, {
+			cooldown,
+			onClosed: () => { this.credentialModalOpen = false; },
+			login: (email, password) => {
+				previousAttemptAgo = cooldown.noteAttempt();
+				return this.garminProvider.loginWithCredentials(email, password);
+			},
+			verifyMfa: (code) => this.garminProvider.completeMfaLogin(code),
+			onSuccess: async () => {
 				await this.handleLoginResult(true, "noticeLoginFailed");
-				return;
-			}
-			if (result.cancelled) {
-				// User deliberately closed the login window — not a stall/escape. Don't
-				// nag with a fallback notice or auto-open the guided browser login.
-				console.debug("Garmin Health Sync: login window closed by user — no fallback prompt");
-				return;
-			}
-			// Issue #6: genuine no_ticket (the hand-off escapes to the system browser or
-			// stalls on the form). Instead of a dead-end failure notice, guide to the
-			// browser login — it uses a real browser and completes where the window cannot.
-			console.debug("Garmin Health Sync: in-window login produced no ticket → guided browser login");
-			new Notice(t("noticeLoginFallbackToBrowser", this.settings.language));
-			this.openManualLogin();
-		} catch (error) {
-			console.error("Garmin Health Sync: OAuth login failed", error);
-			new Notice(t("noticeLoginFallbackToBrowser", this.settings.language));
-			this.openManualLogin();
-		}
+				onSuccess?.();
+			},
+			// Backup on every platform: sign in on Garmin's page in the browser, paste the ticket back.
+			onBrowserFallback: () => this.openManualLogin(onSuccess),
+			// Attempt timing helps work out how long Garmin's limit really lasts.
+			getDiagnostics: () => `${this.garminProvider.getLoginDiagnostics()}\nprevious attempt: ${previousAttemptAgo === null ? "none" : `${previousAttemptAgo}s ago`}, blocks in a row: ${cooldown.strikes()}`,
+		}).open();
 	}
 
 	/** Manual-ticket login fallback (issue #6): opens the modal where the user
@@ -483,6 +492,9 @@ export default class HealthSyncPlugin extends Plugin {
 		this.settings.garminSession = "";
 		this.settings.garminOAuth1 = "";
 		this.settings.garminOAuth2 = "";
+		if (!writeStoredTokens(this.app, null, null)) {
+			console.warn("Garmin Health Sync: could not clear the stored Garmin tokens");
+		}
 		await this.saveSettings();
 	}
 
@@ -547,20 +559,39 @@ export default class HealthSyncPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	/** Restore persisted OAuth tokens into the provider on startup. */
-	private restoreTokens(): void {
+	/** Restore persisted OAuth tokens into the provider on startup. Tokens live in Obsidian's
+	 *  secret storage; tokens left in data.json by earlier versions are moved there once. */
+	private async restoreTokens(): Promise<void> {
 		const parse = <T>(raw: string): T | null => {
 			if (!raw) return null;
 			try { return JSON.parse(raw) as T; } catch { return null; }
 		};
-		const oauth1 = parse<OAuth1Token>(this.settings.garminOAuth1);
-		const oauth2 = parse<OAuth2Token>(this.settings.garminOAuth2);
+		const stored = readStoredTokens(this.app);
+		const legacy1 = parse<OAuth1Token>(this.settings.garminOAuth1);
+		const legacy2 = parse<OAuth2Token>(this.settings.garminOAuth2);
+		const oauth1 = stored.oauth1 ?? legacy1;
+		const oauth2 = stored.oauth2 ?? legacy2;
 		if (oauth1) this.garminProvider.setTokens(oauth1, oauth2);
+
+		// One-time move out of data.json: clear the plaintext copy only after the secret
+		// store returned exactly what was written, so a failure never logs the user out.
+		if (this.settings.garminOAuth1 || this.settings.garminOAuth2) {
+			if (oauth1 && !writeStoredTokens(this.app, oauth1, oauth2)) return;
+			this.settings.garminOAuth1 = "";
+			this.settings.garminOAuth2 = "";
+			await this.saveSettings();
+		}
 	}
 
-	/** Persist the provider's current OAuth tokens (they may have been refreshed). */
+	/** Persist the provider's current OAuth tokens (they may have been refreshed). Falls back
+	 *  to data.json only where secret storage is unavailable. */
 	private saveTokens(): void {
 		const { oauth1, oauth2 } = this.garminProvider.getTokens();
+		if (writeStoredTokens(this.app, oauth1, oauth2)) {
+			this.settings.garminOAuth1 = "";
+			this.settings.garminOAuth2 = "";
+			return;
+		}
 		this.settings.garminOAuth1 = oauth1 ? JSON.stringify(oauth1) : "";
 		this.settings.garminOAuth2 = oauth2 ? JSON.stringify(oauth2) : "";
 	}
@@ -569,7 +600,7 @@ export default class HealthSyncPlugin extends Plugin {
 	 *  log in again once, and clear the legacy field so the notice does not
 	 *  reappear. The re-login then goes through the new OAuth flow. */
 	private async migrateLegacySession(): Promise<void> {
-		if (this.settings.garminSession && !this.settings.garminOAuth1) {
+		if (this.settings.garminSession && !this.garminProvider.isSessionValid()) {
 			new Notice(t("noticeMigrationReloginRequired", this.settings.language), 0);
 			this.settings.garminSession = "";
 			// F10: await so the disk write completes — otherwise the migration notice
@@ -610,7 +641,11 @@ export default class HealthSyncPlugin extends Plugin {
 	private async loginFromNotice(notice: Notice, button: HTMLButtonElement): Promise<void> {
 		button.disabled = true;
 		button.textContent = t("noticeLoginInProgress", this.settings.language);
-		await this.loginViaBrowser();
+		await this.loginViaBrowser(() => {
+			// Mobile: the credential modal resolves after this handler returns.
+			notice.hide();
+			if (this.loginRequiredNotice === notice) this.loginRequiredNotice = null;
+		});
 
 		if (this.garminProvider.isSessionValid() && this.garminProvider.getAuthState() !== "needsUserLogin") {
 			// Review-C: loginViaBrowser() already triggered an auto-sync on success —

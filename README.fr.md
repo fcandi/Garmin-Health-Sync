@@ -4,9 +4,7 @@
 
 Synchronisez automatiquement les pas, le sommeil, la fréquence cardiaque, le stress, les activités et plus encore depuis Garmin Connect vers Obsidian Daily Notes — sous forme de propriétés frontmatter interrogeables avec Dataview.
 
-> **Bureau uniquement.** Ce plugin utilise le BrowserWindow d'Electron pour l'authentification Garmin Connect et ne fonctionne pas sur mobile.
-
-> **Remarque :** Ce plugin utilise l'API web interne de Garmin Connect via une session de navigateur Electron ; il n'existe pas d'API tierce officielle.
+> **Fonctionne sur ordinateur et sur mobile** (Windows, macOS, Linux, iOS, Android). Ce plugin utilise l’API interne de Garmin Connect ; il n’existe pas d’API tierce officielle. Vous vous connectez avec votre e-mail et votre mot de passe Garmin (et le code de vérification si vous utilisez la validation en deux étapes). Si Garmin bloque cette tentative, une connexion alternative par navigateur est proposée.
 
 ## Fonctionnalités
 
@@ -77,7 +75,7 @@ trainings:
 
 ## Prérequis
 
-- **Obsidian Desktop** (Windows, macOS, Linux) — le plugin ne fonctionne pas sur mobile
+- **Obsidian** sous Windows, macOS, Linux, iOS ou Android
 - **Compte Garmin** avec accès à Garmin Connect
 - Plugin **Daily Notes** ou **Periodic Notes** activé (ou chemin configuré manuellement dans les paramètres)
 
@@ -98,6 +96,12 @@ trainings:
 4. Activez le plugin dans Paramètres → Community Plugins
 
 ## Utilisation
+
+### Connexion
+
+Ouvrez les paramètres du plugin et choisissez **Garmin Connect**, puis saisissez votre e-mail et votre mot de passe Garmin (et le code de vérification si vous utilisez la validation en deux étapes). La connexion fonctionne de la même façon sur ordinateur et sur mobile.
+
+Garmin peut limiter les tentatives de connexion répétées depuis un appareil ; le plugin affiche alors un compte à rebours avant le prochain essai. Si la connexion est bloquée, utilisez plutôt **Utiliser la connexion par navigateur** : vous vous connectez sur la page de Garmin dans votre navigateur, copiez le texte de la page contenant `ST-…` et touchez le bouton du presse-papiers dans le plugin (ou collez-le dans le champ). Une fois connecté, le plugin renouvelle la connexion de lui-même ; vous aurez rarement besoin de vous reconnecter.
 
 ### Où sont enregistrées les notes
 
@@ -168,7 +172,7 @@ Chaque activité se voit attribuer une catégorie :
 
 Ce plugin effectue des requêtes réseau vers deux services externes :
 
-- **Garmin Connect** — une fenêtre de navigateur s'authentifie auprès de Garmin Connect avec vos identifiants. Le plugin ne stocke pas votre mot de passe. Les données locales du plugin peuvent stocker des données de session Garmin, y compris des cookies de session, afin que le plugin puisse restaurer la session du navigateur sans vous demander de vous reconnecter. Traitez ces données de session comme un jeton de connexion : leur durée de vie est contrôlée par Garmin, et elles peuvent être incluses dans des sauvegardes ou des outils de synchronisation si ceux-ci incluent les données des plugins Obsidian. **Déconnexion** supprime les données de session Garmin enregistrées sur cet appareil.
+- **Garmin Connect** — vous saisissez votre e-mail et votre mot de passe (et un code de vérification si nécessaire) dans le plugin. Ils sont envoyés uniquement aux serveurs de connexion de Garmin (`sso.garmin.com`, ou `sso.garmin.cn` pour la Chine) et ne sont jamais stockés ni journalisés par le plugin. Après la connexion, le plugin conserve les jetons de connexion Garmin dans le stockage de secrets d’Obsidian, qui reste sur l’appareil : ils ne sont donc ni synchronisés vers d’autres appareils ni inclus dans les sauvegardes du coffre ou Git. Ce n’est que si le stockage de secrets est indisponible ou refuse l’écriture que le plugin les conserve dans `data.json`. Traitez ces jetons comme un identifiant : leur durée de vie est contrôlée par Garmin. Chaque appareil se connecte séparément. Si Garmin bloque ou limite la connexion, une connexion par navigateur est proposée (vous vous connectez sur la page de Garmin dans votre navigateur et collez le ticket à usage unique). Les clés OAuth publiques nécessaires à la connexion sont récupérées depuis `thegarth.s3.amazonaws.com` (avec des clés de secours intégrées si cet hôte est injoignable). **Déconnexion** supprime les jetons stockés sur cet appareil.
 - **Nominatim (OpenStreetMap)** — si la fonction **Lieu d'entraînement** est activée, les coordonnées GPS de votre première activité sont envoyées à `nominatim.openstreetmap.org` pour la géocodification inverse. Vous pouvez désactiver cette option dans les paramètres sous **Lieu d'entraînement**.
 
 Aucune donnée n'est envoyée à un autre serveur.
